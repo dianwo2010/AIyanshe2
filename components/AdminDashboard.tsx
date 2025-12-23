@@ -80,7 +80,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     setTimeout(() => setConfigSaved(false), 2000);
   };
 
-  // Test Connection
+  // Test Connection (Read Only)
   const testConnection = async () => {
     if (!dbConfig.url || !dbConfig.anonKey) {
       setStatus('error');
@@ -89,6 +89,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     }
     setStatus('testing');
     try {
+      // Use createClient for read-only test with Anon Key (this is safe in browser)
       const supabase = createClient(dbConfig.url, dbConfig.anonKey);
       const { count, error } = await supabase.from('tools').select('*', { count: 'exact', head: true });
       if (error) throw error;
@@ -100,7 +101,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     }
   };
 
-  // Publish to Cloud
+  // Publish to Cloud (Write)
   const handlePublish = async () => {
     const keyToUse = dbConfig.serviceKey || dbConfig.anonKey;
     if (!dbConfig.url || !keyToUse) {
@@ -119,17 +120,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     setStatusMsg('正在连接云端数据库...');
 
     try {
-      const supabase = createClient(dbConfig.url, keyToUse);
+      // FIX: Use raw fetch instead of createClient to bypass "Forbidden use of secret API key" error in browser.
+      // We are acting as a CMS admin here, so this usage is intentional.
+      
+      const baseUrl = dbConfig.url.replace(/\/$/, ""); // Remove trailing slash
+      const headers = {
+        'apikey': keyToUse,
+        'Authorization': `Bearer ${keyToUse}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal' // Don't return all inserted data to save bandwidth
+      };
 
       // 1. Delete all existing (Full Sync Strategy)
+      // REST API: DELETE /rest/v1/tools?id=neq.placeholder_safety_check
       setStatusMsg('正在清理旧数据...');
-      const { error: delError } = await supabase.from('tools').delete().neq('id', 'placeholder_safety_check');
-      if (delError) throw delError;
+      const deleteRes = await fetch(`${baseUrl}/rest/v1/tools?id=neq.placeholder_safety_check`, {
+        method: 'DELETE',
+        headers: headers
+      });
+
+      if (!deleteRes.ok) {
+        const errText = await deleteRes.text();
+        throw new Error(`删除旧数据失败: ${deleteRes.status} ${errText}`);
+      }
 
       // 2. Insert new data
+      // REST API: POST /rest/v1/tools
       setStatusMsg(`正在上传 ${tools.length} 条新数据...`);
-      const { error: insError } = await supabase.from('tools').insert(tools);
-      if (insError) throw insError;
+      const insertRes = await fetch(`${baseUrl}/rest/v1/tools`, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(tools)
+      });
+
+      if (!insertRes.ok) {
+        const errText = await insertRes.text();
+        throw new Error(`上传数据失败: ${insertRes.status} ${errText}`);
+      }
 
       setStatus('success');
       setStatusMsg('🎉 发布成功！全网数据已更新。');

@@ -8,8 +8,8 @@
 
 export const supabaseConfig = {
   // 您的 Supabase 项目 URL (例如: https://xxxxxxxx.supabase.co)
-  url: "https://ortsorsxgsulglzotnfr.supabase.co", 
+  url: "", 
   
   // 您的 Supabase Anon Public Key (公开密钥，用于访客读取数据)
-  anonKey: "sb_publishable_m0zpc8Mq5xfSwGOUB6FwcQ_ERnewQ5J" 
+  anonKey: "" 
 };
