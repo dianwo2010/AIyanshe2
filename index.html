@@ -66,36 +66,7 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module">
-  import React from "react";
-  import { createRoot } from "react-dom/client";
-  import { Sparkles } from "lucide-react";
-
-  function App() {
-    return React.createElement(
-      "div",
-      { className: "min-h-screen flex items-center justify-center" },
-      React.createElement(
-        "div",
-        { className: "text-center animate-fade-in" },
-        React.createElement(
-          "h1",
-          { className: "text-4xl font-extrabold text-slate-800 mb-4 flex items-center justify-center gap-2" },
-          React.createElement(Sparkles, { size: 36, className: "text-blue-500" }),
-          "AI研社"
-        ),
-        React.createElement(
-          "p",
-          { className: "text-slate-500 text-lg" },
-          "页面已成功渲染（非 Vite / 纯 CDN 模式）"
-        )
-      )
-    );
-  }
-
-  const root = document.getElementById("root");
-  createRoot(root).render(React.createElement(App));
-</script>
+    <script type="module" src="/index.tsx"></script>
 
   </body>
 </html>
