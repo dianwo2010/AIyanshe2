@@ -18,7 +18,10 @@ import {
   Tag as TagIcon,
   Filter,
   Ban,
-  Copy
+  Copy,
+  Download,
+  FileJson,
+  Smartphone
 } from 'lucide-react';
 import { Tool, CategoryId } from '../types';
 
@@ -204,26 +207,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
   };
 
   // --- Logic: Batch Import Analysis ---
-  const { uniqueImports, duplicateImports } = useMemo(() => {
-    if (importPreview.length === 0) return { uniqueImports: [], duplicateImports: [] };
-
-    const existingUrls = new Set(tools.map(t => normalizeUrl(t.url)));
-    const unique: Tool[] = [];
-    const dups: Tool[] = [];
-
-    importPreview.forEach(item => {
-      if (existingUrls.has(normalizeUrl(item.url))) {
-        dups.push(item);
-      } else {
-        unique.push(item);
-      }
-    });
-
-    return { uniqueImports: unique, duplicateImports: dups };
-  }, [importPreview, tools]);
-
-
+  
   const parseImportText = () => {
+    const trimmed = importText.trim();
+    
+    // 1. Try parsing as JSON first (for Backup Restoration)
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            // Support both raw array or object with data property
+            const dataArray = Array.isArray(parsed) ? parsed : (parsed.data || []);
+            
+            if (Array.isArray(dataArray)) {
+                const validTools: Tool[] = dataArray.map((t: any) => ({
+                    id: t.id || `import-json-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                    name: t.name || 'Unknown',
+                    url: t.url || '',
+                    description: t.description || '',
+                    categoryId: t.categoryId || 'chat',
+                    tags: Array.isArray(t.tags) ? t.tags : [],
+                    isHot: !!t.isHot,
+                    iconUrl: t.iconUrl
+                })).filter(t => t.name && t.url);
+
+                if (validTools.length > 0) {
+                    setImportPreview(validTools);
+                    return; // Successfully parsed as JSON, stop here
+                }
+            }
+        } catch (e) {
+            console.log("JSON parse failed, trying line parser...");
+        }
+    }
+
+    // 2. Fallback to Line Parsing (Legacy format)
     const lines = importText.split('\n').filter(line => line.trim());
     const parsed: Tool[] = [];
     const seenInBatch = new Set<string>();
@@ -265,14 +282,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
              const isCatKeyword = knownKeywords.some(k => s.includes(k));
              
              if (parts.length >= 5) {
-                 // Explicit 5 parts: Name|URL|Desc|Cat|Tags
                  categoryId = parseCategory(parts[3]);
                  tags = parts[4].split(/[,，、\s]+/).map(t => t.trim()).filter(t => t.length > 0);
              } else if (isCatKeyword && !isTagList) {
-                 // 4 Parts, but part 3 looks like category: Name|URL|Desc|Cat
                  categoryId = parseCategory(parts[3]);
              } else {
-                 // 4 Parts, part 3 looks like tags: Name|URL|Desc|Tags (Legacy/Simple format)
                  tags = parts[3].split(/[,，、\s]+/).map(t => t.trim()).filter(t => t.length > 0);
              }
         }
@@ -291,6 +305,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     setImportPreview(parsed);
   };
 
+  const { uniqueImports, duplicateImports } = useMemo(() => {
+    if (importPreview.length === 0) return { uniqueImports: [], duplicateImports: [] };
+
+    const existingUrls = new Set(tools.map(t => normalizeUrl(t.url)));
+    const unique: Tool[] = [];
+    const dups: Tool[] = [];
+
+    importPreview.forEach(item => {
+      if (existingUrls.has(normalizeUrl(item.url))) {
+        dups.push(item);
+      } else {
+        unique.push(item);
+      }
+    });
+
+    return { uniqueImports: unique, duplicateImports: dups };
+  }, [importPreview, tools]);
+
   const confirmImport = () => {
     if (uniqueImports.length === 0) return;
     setTools(prev => [...uniqueImports, ...prev]);
@@ -299,6 +331,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     const dupMsg = duplicateImports.length > 0 ? `\n(已自动忽略 ${duplicateImports.length} 个重复网址)` : '';
     alert(`成功导入 ${uniqueImports.length} 个新网站！${dupMsg}`);
     setActiveTab('tools');
+  };
+
+  const handleExport = () => {
+    const dataStr = JSON.stringify(tools, null, 2);
+    navigator.clipboard.writeText(dataStr).then(() => {
+        alert('✅ 数据代码已复制到剪贴板！\n\n请在其他设备（如手机）的后台打开此页面，粘贴到下方的输入框中即可同步。');
+    }).catch(() => {
+        alert('❌ 复制失败，请手动复制屏幕下方导出的内容。');
+    });
   };
 
   // --- Logic: Tag Management ---
@@ -462,8 +503,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
               <h1 className="text-2xl font-bold flex items-center gap-2">
                 <Database className="text-blue-400" /> 管理系统
               </h1>
-              <p className="text-slate-400 text-xs mt-1">
-                本地数据管理 (LocalStorage) · 共 {tools.length} 个网站
+              <p className="text-slate-400 text-xs mt-1 flex items-center gap-1">
+                 <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+                 本地数据模式 · Local Storage
               </p>
             </div>
           </div>
@@ -483,7 +525,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
             onClick={() => setActiveTab('import')}
             className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'import' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
           >
-            批量导入
+            备份/同步
           </button>
           <button 
             onClick={() => setActiveTab('tags')}
@@ -588,39 +630,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
           </div>
         )}
 
-        {/* VIEW: BATCH IMPORT */}
+        {/* VIEW: BATCH IMPORT / BACKUP */}
         {activeTab === 'import' && (
           <div className="animate-fade-in-up max-w-3xl mx-auto">
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-6 flex items-start gap-3">
-              <AlertCircle className="text-blue-500 shrink-0 mt-0.5" size={20} />
-              <div className="text-sm text-blue-800">
-                <p className="font-bold mb-1">导入格式说明</p>
-                <p>请按行输入，每行格式为：<code className="bg-blue-100 px-1 rounded">名称 | 链接 | 描述 | 分类 | 标签1,标签2</code></p>
-                <p className="mt-1 opacity-70">例如：ChatGPT | https://chat.openai.com | 最强AI | 对话 | 免费,外网</p>
-              </div>
+            
+            {/* Export Section */}
+            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white mb-8 shadow-lg shadow-indigo-500/20">
+                <div className="flex items-start justify-between mb-4">
+                   <div>
+                       <h2 className="text-xl font-bold flex items-center gap-2">
+                           <Smartphone size={24} /> 多端同步 / 数据备份
+                       </h2>
+                       <p className="text-indigo-100 text-sm mt-1 opacity-90 max-w-md">
+                           由于是纯静态网站，数据仅保存在当前浏览器中。若需同步到手机或其他设备，请先在此处点击“导出”，然后在另一台设备的此页面“导入”。
+                       </p>
+                   </div>
+                   <div className="bg-white/20 p-2 rounded-lg">
+                       <FileJson size={24} />
+                   </div>
+                </div>
+                <button 
+                   onClick={handleExport}
+                   className="w-full bg-white text-indigo-600 font-bold py-3 rounded-xl hover:bg-indigo-50 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm"
+                >
+                   <Copy size={18} /> 复制当前数据代码 (导出)
+                </button>
             </div>
 
-            <textarea
-              value={importText}
-              onChange={e => setImportText(e.target.value)}
-              className="w-full h-64 p-4 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm shadow-inner"
-              placeholder={`ChatGPT | https://chat.openai.com | 全球最强综合 AI | 对话 | 外网,智能\nMidjourney | https://www.midjourney.com | 顶级绘图工具 | 绘图 | 付费`}
-            />
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+                    <Upload size={20} className="text-blue-500" />
+                    <h3>导入数据 / 批量添加</h3>
+                </div>
+                
+                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 mb-4 text-xs text-slate-500">
+                    <p className="font-bold mb-1 text-slate-700">支持两种格式：</p>
+                    <ul className="list-disc pl-4 space-y-1">
+                        <li><span className="text-blue-600 font-medium">JSON 格式</span>：直接粘贴上方导出的数据代码，用于恢复备份或同步。</li>
+                        <li><span className="text-green-600 font-medium">文本格式</span>：一行一个，格式为 <code className="bg-white px-1 border rounded">名称 | 链接 | 描述 | 分类 | 标签</code></li>
+                    </ul>
+                </div>
 
-            <div className="flex gap-4 mt-4">
-              <button 
-                onClick={parseImportText}
-                className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <Search size={18} /> 预览解析
-              </button>
-              <button 
-                disabled={uniqueImports.length === 0}
-                onClick={confirmImport}
-                className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
-              >
-                <Upload size={18} /> 确认导入 ({uniqueImports.length})
-              </button>
+                <textarea
+                  value={importText}
+                  onChange={e => setImportText(e.target.value)}
+                  className="w-full h-48 p-4 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-xs sm:text-sm shadow-inner bg-slate-50 focus:bg-white transition-colors"
+                  placeholder={`粘贴导出的 JSON 代码，或者输入新网站：\n\nChatGPT | https://chat.openai.com | 全球最强综合 AI | 对话 | 外网,智能\nMidjourney | https://www.midjourney.com | 顶级绘图工具 | 绘图 | 付费`}
+                />
+
+                <div className="flex gap-4 mt-4">
+                  <button 
+                    onClick={parseImportText}
+                    className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Search size={18} /> 解析预览
+                  </button>
+                  <button 
+                    disabled={uniqueImports.length === 0}
+                    onClick={confirmImport}
+                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
+                  >
+                    <Download size={18} /> 确认导入 ({uniqueImports.length})
+                  </button>
+                </div>
             </div>
 
             {duplicateImports.length > 0 && (
