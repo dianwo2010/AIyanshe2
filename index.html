@@ -2,69 +2,159 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>AI研社 - 发现新可能</title>
+
+    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
             animation: {
-              'fade-in': 'fadeIn 0.5s ease-out',
-              'fade-in-up': 'fadeInUp 0.5s ease-out',
-              'scale-in': 'scaleIn 0.3s ease-out',
+              "fade-in": "fadeIn 0.6s ease-out",
+              "fade-in-up": "fadeInUp 0.6s ease-out",
             },
             keyframes: {
               fadeIn: {
-                '0%': { opacity: '0' },
-                '100%': { opacity: '1' },
+                "0%": { opacity: "0" },
+                "100%": { opacity: "1" },
               },
               fadeInUp: {
-                '0%': { opacity: '0', transform: 'translateY(10px)' },
-                '100%': { opacity: '1', transform: 'translateY(0)' },
-              },
-              scaleIn: {
-                '0%': { opacity: '0', transform: 'scale(0.9)' },
-                '100%': { opacity: '1', transform: 'scale(1)' },
+                "0%": { opacity: "0", transform: "translateY(12px)" },
+                "100%": { opacity: "1", transform: "translateY(0)" },
               },
             },
           },
         },
+      };
+    </script>
+
+    <!-- Font -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- React / Icons importmap -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.292.0"
+        }
       }
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
     <style>
       body {
-        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-family: "Plus Jakarta Sans", system-ui, -apple-system,
+          "PingFang SC", "Microsoft YaHei", sans-serif;
         background-color: #f8fafc;
-        background-image: 
-            radial-gradient(at 0% 0%, rgba(34, 211, 238, 0.08) 0px, transparent 50%),
-            radial-gradient(at 100% 0%, rgba(59, 130, 246, 0.08) 0px, transparent 50%),
-            radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.05) 0px, transparent 50%);
+        background-image:
+          radial-gradient(at 0% 0%, rgba(34, 211, 238, 0.08) 0px, transparent 50%),
+          radial-gradient(at 100% 0%, rgba(59, 130, 246, 0.08) 0px, transparent 50%),
+          radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.05) 0px, transparent 50%);
         background-attachment: fixed;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .no-scrollbar::-webkit-scrollbar {
-        display: none;
-      }
-      .no-scrollbar {
-        -ms-overflow-style: none;
-        scrollbar-width: none;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.2.0",
-    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "lucide-react": "https://esm.sh/lucide-react@0.292.0"
-  }
-}
-</script>
-</head>
+  </head>
+
   <body>
     <div id="root"></div>
+
+    <!-- React 渲染入口（关键） -->
+    <script type="module">
+      import React from "react";
+      import { createRoot } from "react-dom/client";
+      import { Sparkles, Bot, Search } from "lucide-react";
+
+      function App() {
+        return React.createElement(
+          "div",
+          { className: "min-h-screen flex items-center justify-center px-4" },
+          React.createElement(
+            "div",
+            {
+              className:
+                "max-w-xl w-full bg-white/70 backdrop-blur rounded-2xl shadow-xl p-8 text-center animate-fade-in-up",
+            },
+
+            React.createElement(
+              "h1",
+              {
+                className:
+                  "text-4xl font-extrabold text-slate-800 flex items-center justify-center gap-3 mb-4",
+              },
+              React.createElement(Sparkles, {
+                className: "text-blue-500",
+                size: 36,
+              }),
+              "AI研社"
+            ),
+
+            React.createElement(
+              "p",
+              { className: "text-slate-500 text-lg mb-8" },
+              "发现、体验、记录 AI 的新可能"
+            ),
+
+            React.createElement(
+              "div",
+              { className: "grid grid-cols-1 sm:grid-cols-2 gap-4" },
+
+              React.createElement(
+                "div",
+                {
+                  className:
+                    "rounded-xl border border-slate-200 p-4 hover:shadow transition",
+                },
+                React.createElement(Bot, {
+                  className: "mx-auto mb-2 text-indigo-500",
+                }),
+                React.createElement(
+                  "div",
+                  { className: "font-semibold text-slate-700" },
+                  "AI 工具导航"
+                ),
+                React.createElement(
+                  "div",
+                  { className: "text-sm text-slate-500 mt-1" },
+                  "精选优质 AI 网站与应用"
+                )
+              ),
+
+              React.createElement(
+                "div",
+                {
+                  className:
+                    "rounded-xl border border-slate-200 p-4 hover:shadow transition",
+                },
+                React.createElement(Search, {
+                  className: "mx-auto mb-2 text-cyan-500",
+                }),
+                React.createElement(
+                  "div",
+                  { className: "font-semibold text-slate-700" },
+                  "体验记录"
+                ),
+                React.createElement(
+                  "div",
+                  { className: "text-sm text-slate-500 mt-1" },
+                  "记录你的 AI 使用体验"
+                )
+              )
+            )
+          )
+        );
+      }
+
+      const root = document.getElementById("root");
+      createRoot(root).render(React.createElement(App));
+    </script>
   </body>
 </html>
