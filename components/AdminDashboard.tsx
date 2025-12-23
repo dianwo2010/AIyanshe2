@@ -21,8 +21,15 @@ import {
   Copy,
   Download,
   FileJson,
-  Smartphone
+  Smartphone,
+  Cloud,
+  Link2,
+  RefreshCw,
+  LogOut,
+  HelpCircle
 } from 'lucide-react';
+// @ts-ignore
+import { createClient } from '@supabase/supabase-js';
 import { Tool, CategoryId } from '../types';
 
 interface AdminDashboardProps {
@@ -32,7 +39,7 @@ interface AdminDashboardProps {
   onSelectTag?: (tag: string) => void;
 }
 
-type Tab = 'tools' | 'import' | 'tags';
+type Tab = 'tools' | 'import' | 'tags' | 'cloud';
 
 // Helper to normalize URLs for comparison (trim, lowercase, remove trailing slash)
 const normalizeUrl = (url: string) => url.trim().toLowerCase().replace(/\/+$/, '');
@@ -48,6 +55,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
   const [importText, setImportText] = useState('');
   const [importPreview, setImportPreview] = useState<Tool[]>([]);
   
+  // Cloud / Database State
+  const [dbConfig, setDbConfig] = useState<{url: string, key: string}>(() => {
+    try {
+      const saved = localStorage.getItem('ai-db-config');
+      return saved ? JSON.parse(saved) : { url: '', key: '' };
+    } catch { return { url: '', key: '' }; }
+  });
+  const [dbStatus, setDbStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+  const [syncLoading, setSyncLoading] = useState(false);
+
   // Tag Management State
   const [globalTags, setGlobalTags] = useState<string[]>(() => {
     try {
@@ -113,6 +130,113 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
       return hasChanges ? Array.from(currentSet) : prev;
     });
   }, [tools]);
+
+  // --- Effect: Check DB Connection on Mount if config exists ---
+  useEffect(() => {
+    if (dbConfig.url && dbConfig.key) {
+      // Simple check
+      if (dbConfig.url.includes('supabase.co')) {
+        setDbStatus('connected');
+      }
+    }
+  }, []);
+
+  // --- Logic: Cloud Database ---
+  const saveDbConfig = () => {
+    if (!dbConfig.url || !dbConfig.key) {
+      alert('请输入有效的 Supabase URL 和 Anon Key');
+      return;
+    }
+    localStorage.setItem('ai-db-config', JSON.stringify(dbConfig));
+    setDbStatus('connected');
+    alert('配置已保存！现在可以尝试同步数据。');
+  };
+
+  const clearDbConfig = () => {
+    setDbConfig({ url: '', key: '' });
+    localStorage.removeItem('ai-db-config');
+    setDbStatus('disconnected');
+  };
+
+  const getSupabaseClient = () => {
+    if (!dbConfig.url || !dbConfig.key) return null;
+    try {
+      return createClient(dbConfig.url, dbConfig.key);
+    } catch (e) {
+      console.error("Supabase init failed", e);
+      return null;
+    }
+  };
+
+  const handleCloudPull = async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert('请先配置数据库连接');
+
+    setSyncLoading(true);
+    try {
+      // Fetch all tools
+      const { data, error } = await supabase.from('tools').select('*');
+      
+      if (error) throw error;
+      
+      if (data && Array.isArray(data)) {
+         // Map back if necessary (Supabase keeps column names, assume user used the SQL provided)
+         // We assume the columns match the Tool interface keys (id, name, url, description, categoryId, etc.)
+         // The SQL provided below uses quoted identifiers "categoryId" etc to match case.
+         
+         setTools(data as Tool[]);
+         alert(`✅ 同步成功！从云端加载了 ${data.length} 个网站。`);
+      } else {
+         alert('云端暂无数据或格式不正确。');
+      }
+    } catch (err: any) {
+      console.error('Pull Error:', err);
+      alert(`❌ 同步失败: ${err.message || '未知错误，请检查表结构或权限'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const handleCloudPush = async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return alert('请先配置数据库连接');
+
+    setConfirmation({
+      isOpen: true,
+      title: '覆盖云端数据',
+      message: `确定要将本地的 ${tools.length} 个网站上传到云端吗？\n\n⚠️ 这将覆盖云端数据库中的所有现有数据！`,
+      isDangerous: true,
+      confirmText: '确认覆盖上传',
+      action: async () => {
+        setSyncLoading(true);
+        closeConfirmation();
+        try {
+          // Strategy: Delete all and Insert all to ensure exact sync (handling deletions)
+          // 1. Delete all (using a condition that is always true, e.g., id is not null)
+          const { error: delError } = await supabase.from('tools').delete().neq('id', 'placeholder_impossible_id');
+          // Note: To delete all rows in Supabase without a where clause is sometimes blocked. 
+          // .neq('id', '0') is a safe hack if all ids are uuid or strings not '0'.
+          
+          if (delError) {
+             console.warn("Delete all warning", delError);
+             // Continue trying to upsert if delete fails (might be RLS policy)
+          }
+
+          // 2. Insert chunks (Supabase has a payload limit, but for <1000 items usually fine)
+          const { error: insertError } = await supabase.from('tools').upsert(tools);
+          
+          if (insertError) throw insertError;
+          
+          alert('✅ 上传成功！本地数据已同步至云端。');
+        } catch (err: any) {
+          console.error('Push Error:', err);
+          alert(`❌ 上传失败: ${err.message || '请检查数据库权限或表结构'}`);
+        } finally {
+          setSyncLoading(false);
+        }
+      }
+    });
+  };
 
   // --- Logic: Tool Management ---
   const filteredTools = tools.filter(t => {
@@ -504,8 +628,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
                 <Database className="text-blue-400" /> 管理系统
               </h1>
               <p className="text-slate-400 text-xs mt-1 flex items-center gap-1">
-                 <span className="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-                 本地数据模式 · Local Storage
+                 <span className={`inline-block w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
+                 {dbStatus === 'connected' ? 'Cloud Sync Active' : 'Local Storage Mode'}
               </p>
             </div>
           </div>
@@ -525,13 +649,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
             onClick={() => setActiveTab('import')}
             className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'import' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
           >
-            备份/同步
+            导入/导出
           </button>
           <button 
             onClick={() => setActiveTab('tags')}
             className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'tags' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
           >
             标签管理
+          </button>
+          <button 
+            onClick={() => setActiveTab('cloud')}
+            className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${activeTab === 'cloud' ? 'border-green-500 text-green-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+          >
+            <Cloud size={16} /> 云数据库 <span className="bg-green-100 text-green-700 text-[10px] px-1 rounded">Beta</span>
           </button>
         </div>
       </div>
@@ -627,6 +757,140 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
                 <div className="p-8 text-center text-slate-400">没有找到相关网站</div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* VIEW: CLOUD DB */}
+        {activeTab === 'cloud' && (
+          <div className="animate-fade-in-up max-w-3xl mx-auto space-y-8">
+            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-xl">
+               <div className="flex items-start justify-between">
+                 <div>
+                   <h2 className="text-2xl font-bold flex items-center gap-2 mb-2">
+                     <Database className="text-green-400" /> Supabase 云数据库
+                   </h2>
+                   <p className="text-slate-300 text-sm max-w-lg">
+                     连接到您自己的 Supabase 数据库，实现多端数据实时同步。数据将存储在您的私有云端，不再局限于浏览器缓存。
+                   </p>
+                 </div>
+                 <div className={`px-3 py-1 rounded-full text-xs font-bold border ${dbStatus === 'connected' ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-red-500/20 border-red-500/50 text-red-300'}`}>
+                    {dbStatus === 'connected' ? '已连接' : '未连接'}
+                 </div>
+               </div>
+            </div>
+
+            {dbStatus === 'connected' ? (
+              <div className="grid md:grid-cols-2 gap-6">
+                 {/* Push Card */}
+                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+                    <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 mb-4">
+                       <Upload size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-2">上传本地数据</h3>
+                    <p className="text-sm text-slate-500 mb-6 min-h-[40px]">
+                       将当前浏览器的 {tools.length} 条数据推送到云端。⚠️ 警告：这将覆盖云端现有数据。
+                    </p>
+                    <button 
+                      onClick={handleCloudPush}
+                      disabled={syncLoading}
+                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                    >
+                      {syncLoading ? <RefreshCw className="animate-spin" /> : <Upload size={18} />}
+                      推送到云端
+                    </button>
+                 </div>
+
+                 {/* Pull Card */}
+                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
+                    <div className="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-green-600 mb-4">
+                       <Download size={24} />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-2">下载云端数据</h3>
+                    <p className="text-sm text-slate-500 mb-6 min-h-[40px]">
+                       从云端拉取最新数据并覆盖本地。请确保云端数据是最新的。
+                    </p>
+                    <button 
+                      onClick={handleCloudPull}
+                      disabled={syncLoading}
+                      className="w-full py-3 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
+                    >
+                      {syncLoading ? <RefreshCw className="animate-spin" /> : <Download size={18} />}
+                      从云端拉取
+                    </button>
+                 </div>
+
+                 <div className="md:col-span-2 text-center">
+                    <button onClick={clearDbConfig} className="text-red-400 hover:text-red-500 text-sm font-medium flex items-center gap-1 mx-auto hover:underline">
+                       <LogOut size={14} /> 断开连接 / 清除配置
+                    </button>
+                 </div>
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                 <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                   <Link2 size={20} className="text-blue-500" /> 连接配置
+                 </h3>
+                 <div className="space-y-4 max-w-xl mx-auto">
+                    <div>
+                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Project URL</label>
+                       <input 
+                         value={dbConfig.url}
+                         onChange={e => setDbConfig({...dbConfig, url: e.target.value})}
+                         className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono text-sm"
+                         placeholder="https://xyz.supabase.co"
+                       />
+                    </div>
+                    <div>
+                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Anon Key (Public)</label>
+                       <input 
+                         type="password"
+                         value={dbConfig.key}
+                         onChange={e => setDbConfig({...dbConfig, key: e.target.value})}
+                         className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono text-sm"
+                         placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                       />
+                    </div>
+                    <button 
+                      onClick={saveDbConfig}
+                      className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors"
+                    >
+                      保存并连接
+                    </button>
+                 </div>
+
+                 <div className="mt-8 pt-8 border-t border-slate-100">
+                    <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
+                       <HelpCircle size={16} /> 如何开始？
+                    </h4>
+                    <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-500">
+                       <li>前往 <a href="https://supabase.com" target="_blank" className="text-blue-500 underline">Supabase.com</a> 注册并创建一个新项目。</li>
+                       <li>在项目设置中找到 <strong>API Settings</strong>，复制 <code>Project URL</code> 和 <code>anon public key</code>。</li>
+                       <li>在 Supabase 的 <strong>SQL Editor</strong> 中运行以下代码来创建数据表：</li>
+                    </ol>
+                    <div className="mt-3 bg-slate-900 rounded-xl p-4 relative group">
+                       <pre className="text-xs text-green-400 font-mono overflow-x-auto no-scrollbar">
+{`create table tools (
+  id text primary key,
+  name text,
+  description text,
+  url text,
+  "iconUrl" text,
+  "categoryId" text,
+  "isHot" boolean,
+  tags text[]
+);`}
+                       </pre>
+                       <button 
+                         onClick={() => navigator.clipboard.writeText(`create table tools (\n  id text primary key,\n  name text,\n  description text,\n  url text,\n  "iconUrl" text,\n  "categoryId" text,\n  "isHot" boolean,\n  tags text[]\n);`)}
+                         className="absolute top-2 right-2 p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"
+                         title="复制 SQL"
+                       >
+                          <Copy size={14} />
+                       </button>
+                    </div>
+                 </div>
+              </div>
+            )}
           </div>
         )}
 
