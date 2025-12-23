@@ -68,7 +68,11 @@ function App() {
   const [tools, setTools] = useState<Tool[]>(() => {
     try {
       const saved = localStorage.getItem('ai-tools-data');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Safety check to ensure parsed data is an array
+        if (Array.isArray(parsed)) return parsed;
+      }
       return toolsData;
     } catch (e) {
       return toolsData;
