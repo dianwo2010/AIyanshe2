@@ -299,6 +299,14 @@ function App() {
     if (isRightSwipe && canGoBack) handleBack();
   };
 
+  // --- Navigation Handler for Categories ---
+  const handleNavigateToCategory = (id: CategoryId) => {
+    setActiveCategory(id);
+    setSearchQuery('');
+    setSelectedTag(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   if (view === 'admin') {
     return (
       <AdminDashboard 
@@ -315,7 +323,13 @@ function App() {
       className="min-h-screen pb-24 text-slate-900 selection:bg-cyan-100/50"
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
     >
-      <SearchBar value={searchQuery} onChange={setSearchQuery} canGoBack={canGoBack} onBack={handleBack} />
+      <SearchBar 
+        value={searchQuery} 
+        onChange={setSearchQuery} 
+        canGoBack={canGoBack} 
+        onBack={handleBack} 
+        onHome={() => handleNavigateToCategory('new')} 
+      />
 
       <main className="px-4 sm:px-5 mt-4 sm:mt-6 animate-fade-in-up max-w-7xl mx-auto">
         {!searchQuery && (
@@ -372,8 +386,8 @@ function App() {
                        最新资讯
                     </h3>
                     <button 
-                       onClick={() => { setActiveCategory('news'); setSearchQuery(''); setSelectedTag(null); window.scrollTo({top:0, behavior:'smooth'}); }}
-                       className="text-xs font-bold text-indigo-500 flex items-center gap-0.5 hover:underline p-2 -mr-2 cursor-pointer active:opacity-70"
+                       onClick={() => handleNavigateToCategory('news')}
+                       className="text-xs font-bold text-indigo-500 flex items-center gap-0.5 hover:underline p-2 -mr-2 cursor-pointer active:opacity-70 transition-opacity"
                     >
                        全部 <ChevronRight size={12} />
                     </button>
@@ -382,7 +396,7 @@ function App() {
                     {newsSnippets.map((item, i) => (
                        <div 
                          key={i}
-                         onClick={() => { setActiveCategory('news'); setSearchQuery(''); setSelectedTag(null); window.scrollTo({top:0, behavior:'smooth'}); }}
+                         onClick={() => handleNavigateToCategory('news')}
                          className="flex items-start gap-3 p-3.5 hover:bg-white/50 transition-colors active:bg-slate-100/50 cursor-pointer"
                        >
                          <div className="flex-1 min-w-0">
@@ -428,14 +442,20 @@ function App() {
               if (catTools.length === 0) return null;
               return (
                 <div key={cat.id} className="animate-fade-in-up">
-                  <div onClick={() => { setActiveCategory(cat.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="flex items-center justify-between mb-4 cursor-pointer group">
+                  {/* Category Header with Actionable Click Area */}
+                  <div 
+                    onClick={() => handleNavigateToCategory(cat.id)}
+                    className="flex items-center justify-between mb-4 cursor-pointer group active:opacity-70 transition-opacity"
+                  >
                     <div className="flex items-center gap-2">
                        <div className={`p-1.5 rounded-lg bg-gradient-to-br ${cat.color} text-white shadow-sm`}>
                           <cat.icon size={16} className="text-white" />
                        </div>
                        <h2 className="text-lg font-bold text-slate-800">{cat.label}</h2>
                     </div>
-                    <div className="flex items-center text-xs font-bold text-slate-400 group-hover:text-cyan-600 transition-colors">查看更多 <ChevronRight size={14} /></div>
+                    <button className="flex items-center text-xs font-bold text-slate-400 group-hover:text-cyan-600 transition-colors">
+                      查看更多 <ChevronRight size={14} />
+                    </button>
                   </div>
                   {/* Optimized Grid for Mobile: gap-2 instead of gap-3 */}
                   <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-3 md:grid-cols-4">
@@ -464,7 +484,7 @@ function App() {
         )}
       </main>
 
-      <FloatingMenu categories={CATEGORIES} activeId={activeCategory} onSelect={(id) => { setActiveCategory(id); setSearchQuery(''); setSelectedTag(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+      <FloatingMenu categories={CATEGORIES} activeId={activeCategory} onSelect={handleNavigateToCategory} />
       <AddToolModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddTool} onEnterAdmin={() => setView('admin')} />
     </div>
   );

@@ -1,16 +1,17 @@
 import React from 'react';
-import { Search, X, ChevronLeft } from 'lucide-react';
+import { Search, X, ChevronLeft, Home } from 'lucide-react';
 
 interface SearchBarProps {
   value: string;
   onChange: (val: string) => void;
   canGoBack: boolean;
   onBack: () => void;
+  onHome: () => void;
 }
 
-export const SearchBar: React.FC<SearchBarProps> = ({ value, onChange, canGoBack, onBack }) => {
+export const SearchBar: React.FC<SearchBarProps> = ({ value, onChange, canGoBack, onBack, onHome }) => {
   return (
-    <div className="sticky top-0 z-40 px-4 py-3 bg-white/60 backdrop-blur-xl border-b border-white/40 transition-all duration-300 shadow-sm shadow-slate-200/20 flex items-center gap-3">
+    <div className="sticky top-0 z-40 px-4 py-3 bg-white/60 backdrop-blur-xl border-b border-white/40 transition-all duration-300 shadow-sm shadow-slate-200/20 flex items-center gap-2 sm:gap-3">
       {/* Back Button - Only visible when needed */}
       {canGoBack && (
         <button
@@ -44,6 +45,15 @@ export const SearchBar: React.FC<SearchBarProps> = ({ value, onChange, canGoBack
           </button>
         )}
       </div>
+
+      {/* Home Button */}
+      <button
+        onClick={onHome}
+        className="flex-shrink-0 p-2.5 rounded-xl bg-white/50 border border-white/60 text-slate-600 shadow-sm hover:bg-white/80 hover:text-blue-600 active:scale-95 transition-all"
+        aria-label="回到首页"
+      >
+        <Home size={20} />
+      </button>
     </div>
   );
 };
