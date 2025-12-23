@@ -51,7 +51,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
 
   // --- Management State ---
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingTool, setEditingTool] = useState<Tool | null>(null);
 
   // --- Import State ---
   const [importText, setImportText] = useState('');
@@ -84,7 +83,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
   const testConnection = async () => {
     if (!dbConfig.url || !dbConfig.anonKey) {
       setStatus('error');
-      setStatusMsg('请先填写 URL 和 Key');
+      setStatusMsg('请先填写 URL 和 Anon Key');
       return;
     }
     setStatus('testing');
@@ -103,14 +102,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
 
   // Publish to Cloud (Write)
   const handlePublish = async () => {
-    const keyToUse = dbConfig.serviceKey || dbConfig.anonKey;
-    if (!dbConfig.url || !keyToUse) {
-      alert("请先配置数据库连接 (URL 和 Key)");
+    // We need URL and Anon Key minimally. Service Key is needed for writing if RLS is on.
+    if (!dbConfig.url || !dbConfig.anonKey) {
+      alert("错误：必须填写 Project URL 和 Anon Key (Public Key)。");
       return;
     }
 
+    const authKey = dbConfig.serviceKey || dbConfig.anonKey;
+    
     if (!dbConfig.serviceKey) {
-      const proceed = window.confirm("⚠️ 未检测到 Service Role Key (管理员密钥)\n\n使用普通 Anon Key 可能因权限不足导致发布失败 (RLS)。\n\n是否仍要尝试？");
+      const proceed = window.confirm("⚠️ 未检测到 Service Role Key (管理员密钥)\n\n如果没有正确配置 RLS 策略，使用普通 Anon Key 将无法写入数据。\n\n是否继续？");
       if (!proceed) return;
     }
 
@@ -120,15 +121,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     setStatusMsg('正在连接云端数据库...');
 
     try {
-      // FIX: Use raw fetch instead of createClient to bypass "Forbidden use of secret API key" error in browser.
-      // We are acting as a CMS admin here, so this usage is intentional.
-      
       const baseUrl = dbConfig.url.replace(/\/$/, ""); // Remove trailing slash
+      
+      // CRITICAL FIX:
+      // 'apikey': MUST be the Anon Key to bypass Supabase's browser check (Origin header check).
+      // 'Authorization': MUST be the Service Key to actually get admin privileges (Bypass RLS).
       const headers = {
-        'apikey': keyToUse,
-        'Authorization': `Bearer ${keyToUse}`,
+        'apikey': dbConfig.anonKey, 
+        'Authorization': `Bearer ${authKey}`,
         'Content-Type': 'application/json',
-        'Prefer': 'return=minimal' // Don't return all inserted data to save bandwidth
+        'Prefer': 'return=minimal'
       };
 
       // 1. Delete all existing (Full Sync Strategy)
@@ -141,7 +143,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
 
       if (!deleteRes.ok) {
         const errText = await deleteRes.text();
-        throw new Error(`删除旧数据失败: ${deleteRes.status} ${errText}`);
+        throw new Error(`删除旧数据失败 (${deleteRes.status}): ${errText}`);
       }
 
       // 2. Insert new data
@@ -155,7 +157,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
 
       if (!insertRes.ok) {
         const errText = await insertRes.text();
-        throw new Error(`上传数据失败: ${insertRes.status} ${errText}`);
+        throw new Error(`上传数据失败 (${insertRes.status}): ${errText}`);
       }
 
       setStatus('success');
@@ -163,7 +165,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
     } catch (e: any) {
       console.error(e);
       setStatus('error');
-      setStatusMsg(`发布失败: ${e.message || '请检查密钥权限'}`);
+      setStatusMsg(`发布失败: ${e.message}`);
     }
   };
 
@@ -288,7 +290,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
                       type={showKeys ? "text" : "password"}
                       value={dbConfig.anonKey}
                       onChange={e => setDbConfig({...dbConfig, anonKey: e.target.value})}
-                      placeholder="eyJhbGciOiJIUzI1NiIsInR..."
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR... (必填，用于绕过浏览器检查)"
                       className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none pr-10"
                     />
                   </div>
@@ -302,11 +304,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
                     type={showKeys ? "text" : "password"}
                     value={dbConfig.serviceKey}
                     onChange={e => setDbConfig({...dbConfig, serviceKey: e.target.value})}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR... (管理员专用)"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR... (写入权限必填)"
                     className="w-full bg-orange-50 border border-orange-100 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-orange-500 outline-none placeholder-orange-200 text-orange-800"
                   />
                   <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
-                    * 仅用于发布数据，不会保存在代码中。为了让他人能看到您的网站，请确保部署后的网站 <code className="bg-slate-100 px-1 rounded">config.ts</code> 包含 URL 和 Anon Key。
+                    * 技巧：Anon Key 用于“敲门”，Service Key 用于“解锁”。请务必同时填写两者以成功发布。
                   </p>
                 </div>
 
@@ -352,7 +354,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
                     <div className="flex items-center justify-center gap-2 mb-1 text-red-200">
                        <AlertCircle size={20} /> 发布失败
                     </div>
-                    <p className="text-sm opacity-90">{statusMsg}</p>
+                    <p className="text-sm opacity-90 break-all">{statusMsg}</p>
                     <button onClick={() => setStatus('idle')} className="mt-3 bg-white/20 px-4 py-1.5 rounded-lg text-xs font-bold">重试</button>
                  </div>
               ) : (
@@ -368,8 +370,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools,
             
             {/* Instructions */}
             <div className="bg-slate-100 rounded-xl p-4 text-xs text-slate-500 leading-relaxed">
-              <p className="font-bold mb-1">💡 如何让其他人看到？</p>
-              <p>您在这里发布成功后，其他人打开网站需要能读取数据库。请确保您已将 Project URL 和 Anon Key 填入 <code className="text-slate-700 font-mono">config.ts</code> 文件并重新部署网站。</p>
+              <p className="font-bold mb-1">💡 发布指南：</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>由于浏览器安全限制，必须同时填写 <b>Anon Key</b>（骗过浏览器）和 <b>Service Role Key</b>（获取写入权限）。</li>
+                <li>发布成功后，请确保网站代码的 <code className="text-slate-700 font-mono">config.ts</code> 中填入了 URL 和 Anon Key，这样其他人才能看到数据。</li>
+              </ul>
             </div>
           </div>
         )}
