@@ -2,59 +2,44 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>AI研社 - 发现新可能</title>
-
-    <!-- Tailwind CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- Font -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-
-    <!-- React importmap -->
-    <script type="importmap">
-      {
-        "imports": {
-          "react": "https://esm.sh/react@19",
-          "react-dom/client": "https://esm.sh/react-dom@19/client"
-        }
-      }
-    </script>
-
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       body {
-        font-family: "Plus Jakarta Sans", system-ui, -apple-system, "PingFang SC",
-          "Microsoft YaHei", sans-serif;
-        background-color: #f8fafc;
+        font-family: 'Plus Jakarta Sans', system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        background-color: #f8fafc; /* Slate-50, very clean white-grey */
+        /* Lab-like cool gradients: Cyan, Blue, and a hint of Violet */
+        background-image: 
+            radial-gradient(at 0% 0%, rgba(34, 211, 238, 0.08) 0px, transparent 50%),
+            radial-gradient(at 100% 0%, rgba(59, 130, 246, 0.08) 0px, transparent 50%),
+            radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.05) 0px, transparent 50%);
+        background-attachment: fixed;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* Hide scrollbar for clean mobile look but allow scrolling */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
       }
     </style>
-  </head>
-
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
   <body>
     <div id="root"></div>
-
-    <!-- React 入口（关键） -->
-    <script type="module">
-      import React from "react";
-      import { createRoot } from "react-dom/client";
-
-      function App() {
-        return React.createElement(
-          "div",
-          { className: "min-h-screen flex items-center justify-center" },
-          React.createElement(
-            "h1",
-            { className: "text-4xl font-bold text-slate-800" },
-            "AI研社 · 页面已成功渲染"
-          )
-        );
-      }
-
-      const root = document.getElementById("root");
-      createRoot(root).render(React.createElement(App));
-    </script>
   </body>
 </html>
