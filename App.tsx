@@ -17,8 +17,11 @@ import {
   Newspaper,      // News Icon
   Clock
 } from 'lucide-react';
+// @ts-ignore
+import { createClient } from '@supabase/supabase-js';
 import { Category, CategoryId, Tool, NewsItem } from './types';
 import { toolsData } from './data';
+import { supabaseConfig } from './config'; // Import Config
 import { SearchBar } from './components/SearchBar';
 import { FloatingMenu } from './components/FloatingMenu';
 import { ToolCard } from './components/ToolCard';
@@ -63,6 +66,18 @@ const FALLBACK_NEWS: NewsItem[] = [
   },
 ];
 
+// Helper: Resolve DB Config (File > LocalStorage)
+const getDbConfig = () => {
+  if (supabaseConfig.url && supabaseConfig.anonKey) {
+    return supabaseConfig;
+  }
+  try {
+    const saved = localStorage.getItem('ai-db-config-public');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return { url: '', anonKey: '' };
+};
+
 function App() {
   // --- State Initialization ---
   const [tools, setTools] = useState<Tool[]>(() => {
@@ -79,12 +94,45 @@ function App() {
     }
   });
 
+  // --- Sync from Cloud on Mount ---
+  useEffect(() => {
+    const fetchFromCloud = async () => {
+      const dbConfig = getDbConfig();
+      
+      // 1. Check if config exists
+      if (!dbConfig.url || !dbConfig.anonKey) return;
+
+      try {
+        // 2. Init Client (Public Read)
+        const supabase = createClient(dbConfig.url, dbConfig.anonKey);
+        
+        // 3. Fetch Data
+        const { data, error } = await supabase.from('tools').select('*');
+        
+        if (error) throw error;
+
+        // 4. Update State if data exists
+        if (data && Array.isArray(data) && data.length > 0) {
+           console.log("☁️ Cloud Sync: Loaded", data.length, "items");
+           setTools(data as Tool[]);
+           // Optional: Update local cache so next load is faster before sync
+           localStorage.setItem('ai-tools-data', JSON.stringify(data));
+        }
+      } catch (err) {
+        console.error("Cloud Sync Error:", err);
+        // Fail silently, fall back to local data
+      }
+    };
+
+    fetchFromCloud();
+  }, []);
+
   // --- News State ---
   const [news, setNews] = useState<NewsItem[]>([]);
   const [newsLoading, setNewsLoading] = useState(true);
   const [newsError, setNewsError] = useState(false);
 
-  // Persist changes to LocalStorage
+  // Persist changes to LocalStorage (Manual changes by user)
   useEffect(() => {
     localStorage.setItem('ai-tools-data', JSON.stringify(tools));
   }, [tools]);
@@ -312,7 +360,12 @@ function App() {
       <AdminDashboard 
         tools={tools} 
         setTools={setTools} 
-        onExit={() => setView('home')} 
+        onExit={() => {
+           setView('home');
+           // Re-sync on exit in case admin changed public config
+           const dbConfig = getDbConfig();
+           if (dbConfig.url) window.location.reload(); // Simple reload to pick up new config
+        }}
         onSelectTag={(tag) => { setSelectedTag(tag); setView('home'); setSearchQuery(''); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
       />
     );

@@ -1,36 +1,28 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Trash2, 
   Upload, 
-  Save, 
-  AlertCircle, 
-  CheckCircle, 
-  Search,
+  CloudLightning, 
   Database,
   Edit2,
   X,
-  ExternalLink,
-  Layers,
-  Sparkles,
-  AlertTriangle,
-  Archive,
-  Tag as TagIcon,
-  Filter,
-  Ban,
+  Plus,
+  Save,
+  CheckCircle,
+  AlertCircle,
+  Eye,
+  EyeOff,
   Copy,
-  Download,
-  FileJson,
-  Smartphone,
-  Cloud,
-  Link2,
+  Globe,
+  Settings,
   RefreshCw,
-  LogOut,
-  HelpCircle
+  Rocket
 } from 'lucide-react';
 // @ts-ignore
 import { createClient } from '@supabase/supabase-js';
 import { Tool, CategoryId } from '../types';
+import { supabaseConfig } from '../config';
 
 interface AdminDashboardProps {
   tools: Tool[];
@@ -39,1229 +31,413 @@ interface AdminDashboardProps {
   onSelectTag?: (tag: string) => void;
 }
 
-type Tab = 'tools' | 'import' | 'tags' | 'cloud';
+type Tab = 'publish' | 'manage' | 'import';
 
-// Helper to normalize URLs for comparison (trim, lowercase, remove trailing slash)
-const normalizeUrl = (url: string) => url.trim().toLowerCase().replace(/\/+$/, '');
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools, onExit }) => {
+  const [activeTab, setActiveTab] = useState<Tab>('publish');
+  
+  // --- Config State ---
+  const [dbConfig, setDbConfig] = useState({
+    url: supabaseConfig.url || '',
+    anonKey: supabaseConfig.anonKey || '',
+    serviceKey: '' // Private key for writing
+  });
+  const [showKeys, setShowKeys] = useState(false);
+  const [configSaved, setConfigSaved] = useState(false);
 
-// Helper to normalize Names for loose comparison (remove spaces, lowercase)
-const normalizeName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, '');
+  // --- Publish State ---
+  const [status, setStatus] = useState<'idle' | 'testing' | 'publishing' | 'success' | 'error'>('idle');
+  const [statusMsg, setStatusMsg] = useState('');
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ tools, setTools, onExit, onSelectTag }) => {
-  const [activeTab, setActiveTab] = useState<Tab>('tools');
+  // --- Management State ---
   const [searchTerm, setSearchTerm] = useState('');
-  
-  // Batch Import State
-  const [importText, setImportText] = useState('');
-  const [importPreview, setImportPreview] = useState<Tool[]>([]);
-  
-  // Cloud / Database State
-  const [dbConfig, setDbConfig] = useState<{url: string, key: string}>(() => {
-    try {
-      const saved = localStorage.getItem('ai-db-config');
-      return saved ? JSON.parse(saved) : { url: '', key: '' };
-    } catch { return { url: '', key: '' }; }
-  });
-  const [dbStatus, setDbStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
-  const [syncLoading, setSyncLoading] = useState(false);
-
-  // Tag Management State
-  const [globalTags, setGlobalTags] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('ai-tags-data');
-      const savedTags = saved ? JSON.parse(saved) : [];
-      const combinedTags = new Set<string>(savedTags);
-      tools.forEach(t => t.tags?.forEach(tag => combinedTags.add(tag)));
-      return Array.from(combinedTags);
-    } catch (e) {
-      return [];
-    }
-  });
-
-  const [editingTag, setEditingTag] = useState<string | null>(null);
-  const [newTagName, setNewTagName] = useState('');
-
-  // Tool Editing State
   const [editingTool, setEditingTool] = useState<Tool | null>(null);
-  
-  // Filter State
-  const [filterNoTags, setFilterNoTags] = useState(false);
 
-  // --- Duplicate Management State ---
-  const [showDedupModal, setShowDedupModal] = useState(false);
-  const [duplicateGroups, setDuplicateGroups] = useState<{key: string, items: Tool[]}[]>([]);
+  // --- Import State ---
+  const [importText, setImportText] = useState('');
 
-  // --- Custom Confirmation State ---
-  const [confirmation, setConfirmation] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    action: () => void;
-    confirmText?: string;
-    isDangerous?: boolean;
-  }>({
-    isOpen: false,
-    title: '',
-    message: '',
-    action: () => {},
-    confirmText: '确定',
-    isDangerous: false
-  });
-
-  const closeConfirmation = () => {
-    setConfirmation(prev => ({ ...prev, isOpen: false }));
-  };
-
-  // --- Effect: Persist Tags & Sync with Tools ---
+  // Load saved config on mount
   useEffect(() => {
-    localStorage.setItem('ai-tags-data', JSON.stringify(globalTags));
-  }, [globalTags]);
-
-  useEffect(() => {
-    setGlobalTags(prev => {
-      const currentSet = new Set(prev);
-      let hasChanges = false;
-      tools.forEach(t => t.tags?.forEach(tag => {
-        if (!currentSet.has(tag)) {
-          currentSet.add(tag);
-          hasChanges = true;
-        }
-      }));
-      return hasChanges ? Array.from(currentSet) : prev;
-    });
-  }, [tools]);
-
-  // --- Effect: Check DB Connection on Mount if config exists ---
-  useEffect(() => {
-    if (dbConfig.url && dbConfig.key) {
-      // Simple check
-      if (dbConfig.url.includes('supabase.co')) {
-        setDbStatus('connected');
-      }
+    const savedPublic = localStorage.getItem('ai-db-config-public');
+    const savedService = localStorage.getItem('ai-db-config-service');
+    
+    if (savedPublic) {
+      const parsed = JSON.parse(savedPublic);
+      setDbConfig(prev => ({ ...prev, url: parsed.url, anonKey: parsed.anonKey }));
+    }
+    if (savedService) {
+      setDbConfig(prev => ({ ...prev, serviceKey: savedService }));
     }
   }, []);
 
-  // --- Logic: Cloud Database ---
-  const saveDbConfig = () => {
-    if (!dbConfig.url || !dbConfig.key) {
-      alert('请输入有效的 Supabase URL 和 Anon Key');
+  // Save Config Locally
+  const handleSaveConfig = () => {
+    localStorage.setItem('ai-db-config-public', JSON.stringify({ url: dbConfig.url, anonKey: dbConfig.anonKey }));
+    if (dbConfig.serviceKey) {
+      localStorage.setItem('ai-db-config-service', dbConfig.serviceKey);
+    }
+    setConfigSaved(true);
+    setTimeout(() => setConfigSaved(false), 2000);
+  };
+
+  // Test Connection
+  const testConnection = async () => {
+    if (!dbConfig.url || !dbConfig.anonKey) {
+      setStatus('error');
+      setStatusMsg('请先填写 URL 和 Key');
       return;
     }
-    localStorage.setItem('ai-db-config', JSON.stringify(dbConfig));
-    setDbStatus('connected');
-    alert('配置已保存！现在可以尝试同步数据。');
-  };
-
-  const clearDbConfig = () => {
-    setDbConfig({ url: '', key: '' });
-    localStorage.removeItem('ai-db-config');
-    setDbStatus('disconnected');
-  };
-
-  const getSupabaseClient = () => {
-    if (!dbConfig.url || !dbConfig.key) return null;
+    setStatus('testing');
     try {
-      return createClient(dbConfig.url, dbConfig.key);
-    } catch (e) {
-      console.error("Supabase init failed", e);
-      return null;
-    }
-  };
-
-  const handleCloudPull = async () => {
-    const supabase = getSupabaseClient();
-    if (!supabase) return alert('请先配置数据库连接');
-
-    setSyncLoading(true);
-    try {
-      // Fetch all tools
-      const { data, error } = await supabase.from('tools').select('*');
-      
+      const supabase = createClient(dbConfig.url, dbConfig.anonKey);
+      const { count, error } = await supabase.from('tools').select('*', { count: 'exact', head: true });
       if (error) throw error;
-      
-      if (data && Array.isArray(data)) {
-         // Map back if necessary (Supabase keeps column names, assume user used the SQL provided)
-         // We assume the columns match the Tool interface keys (id, name, url, description, categoryId, etc.)
-         // The SQL provided below uses quoted identifiers "categoryId" etc to match case.
-         
-         setTools(data as Tool[]);
-         alert(`✅ 同步成功！从云端加载了 ${data.length} 个网站。`);
-      } else {
-         alert('云端暂无数据或格式不正确。');
-      }
-    } catch (err: any) {
-      console.error('Pull Error:', err);
-      alert(`❌ 同步失败: ${err.message || '未知错误，请检查表结构或权限'}`);
-    } finally {
-      setSyncLoading(false);
+      setStatus('success');
+      setStatusMsg(`连接成功！云端现有 ${count} 条数据`);
+    } catch (e: any) {
+      setStatus('error');
+      setStatusMsg(`连接失败: ${e.message}`);
     }
   };
 
-  const handleCloudPush = async () => {
-    const supabase = getSupabaseClient();
-    if (!supabase) return alert('请先配置数据库连接');
-
-    setConfirmation({
-      isOpen: true,
-      title: '覆盖云端数据',
-      message: `确定要将本地的 ${tools.length} 个网站上传到云端吗？\n\n⚠️ 这将覆盖云端数据库中的所有现有数据！`,
-      isDangerous: true,
-      confirmText: '确认覆盖上传',
-      action: async () => {
-        setSyncLoading(true);
-        closeConfirmation();
-        try {
-          // Strategy: Delete all and Insert all to ensure exact sync (handling deletions)
-          // 1. Delete all (using a condition that is always true, e.g., id is not null)
-          const { error: delError } = await supabase.from('tools').delete().neq('id', 'placeholder_impossible_id');
-          // Note: To delete all rows in Supabase without a where clause is sometimes blocked. 
-          // .neq('id', '0') is a safe hack if all ids are uuid or strings not '0'.
-          
-          if (delError) {
-             console.warn("Delete all warning", delError);
-             // Continue trying to upsert if delete fails (might be RLS policy)
-          }
-
-          // 2. Insert chunks (Supabase has a payload limit, but for <1000 items usually fine)
-          const { error: insertError } = await supabase.from('tools').upsert(tools);
-          
-          if (insertError) throw insertError;
-          
-          alert('✅ 上传成功！本地数据已同步至云端。');
-        } catch (err: any) {
-          console.error('Push Error:', err);
-          alert(`❌ 上传失败: ${err.message || '请检查数据库权限或表结构'}`);
-        } finally {
-          setSyncLoading(false);
-        }
-      }
-    });
-  };
-
-  // --- Logic: Tool Management ---
-  const filteredTools = tools.filter(t => {
-    if (filterNoTags) {
-       if (t.tags && t.tags.length > 0) return false;
-    }
-    const term = searchTerm.toLowerCase();
-    if (!term) return true;
-    return (
-      t.name.toLowerCase().includes(term) || 
-      t.url.toLowerCase().includes(term) ||
-      t.tags?.some(tag => tag.toLowerCase().includes(term))
-    );
-  });
-
-  const handleEditClick = (e: React.MouseEvent, tool: Tool) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setEditingTool({ ...tool }); 
-  };
-
-  const saveEditedTool = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingTool) return;
-    setTools(prev => prev.map(t => t.id === editingTool.id ? editingTool : t));
-    setEditingTool(null);
-  };
-
-  // --- DELETE FUNCTION (Custom Modal) ---
-  const handleDeleteFromModal = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    if (!editingTool) return;
-    const targetId = editingTool.id;
-    
-    setConfirmation({
-      isOpen: true,
-      title: '删除网站',
-      message: `确定要永久删除 "${editingTool.name}" 吗？`,
-      isDangerous: true,
-      confirmText: '确认删除',
-      action: () => {
-        setTools(prev => prev.filter(t => t.id !== targetId));
-        setEditingTool(null);
-        closeConfirmation();
-      }
-    });
-  };
-
-  // --- NEW: Manual Deduplication Logic ---
-  const handleScanDuplicates = () => {
-    const groups: Record<string, Tool[]> = {};
-    
-    // Group by normalized name
-    tools.forEach(tool => {
-      const key = normalizeName(tool.name);
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(tool);
-    });
-
-    // Filter only groups with > 1 item
-    const results = Object.entries(groups)
-      .filter(([_, items]) => items.length > 1)
-      .map(([key, items]) => ({ key, items }));
-
-    if (results.length === 0) {
-      alert("🎉 太棒了！未发现重复的网站标题。");
+  // Publish to Cloud
+  const handlePublish = async () => {
+    const keyToUse = dbConfig.serviceKey || dbConfig.anonKey;
+    if (!dbConfig.url || !keyToUse) {
+      alert("请先配置数据库连接 (URL 和 Key)");
       return;
     }
 
-    setDuplicateGroups(results);
-    setShowDedupModal(true);
-  };
-
-  const handleDeleteDuplicateItem = (toolId: string, groupKey: string) => {
-    // 1. Remove from main Tools list
-    setTools(prev => prev.filter(t => t.id !== toolId));
-    
-    // 2. Update local Duplicate Groups UI
-    setDuplicateGroups(prev => {
-      return prev.map(group => {
-        if (group.key === groupKey) {
-          return {
-            ...group,
-            items: group.items.filter(t => t.id !== toolId)
-          };
-        }
-        return group;
-      }).filter(group => group.items.length > 1); // Remove group if only 1 item left (no longer duplicate)
-    });
-  };
-
-  // --- Logic: Batch Import Analysis ---
-  
-  const parseImportText = () => {
-    const trimmed = importText.trim();
-    
-    // 1. Try parsing as JSON first (for Backup Restoration)
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-        try {
-            const parsed = JSON.parse(trimmed);
-            // Support both raw array or object with data property
-            const dataArray = Array.isArray(parsed) ? parsed : (parsed.data || []);
-            
-            if (Array.isArray(dataArray)) {
-                const validTools: Tool[] = dataArray.map((t: any) => ({
-                    id: t.id || `import-json-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-                    name: t.name || 'Unknown',
-                    url: t.url || '',
-                    description: t.description || '',
-                    categoryId: t.categoryId || 'chat',
-                    tags: Array.isArray(t.tags) ? t.tags : [],
-                    isHot: !!t.isHot,
-                    iconUrl: t.iconUrl
-                })).filter(t => t.name && t.url);
-
-                if (validTools.length > 0) {
-                    setImportPreview(validTools);
-                    return; // Successfully parsed as JSON, stop here
-                }
-            }
-        } catch (e) {
-            console.log("JSON parse failed, trying line parser...");
-        }
+    if (!dbConfig.serviceKey) {
+      const proceed = window.confirm("⚠️ 未检测到 Service Role Key (管理员密钥)\n\n使用普通 Anon Key 可能因权限不足导致发布失败 (RLS)。\n\n是否仍要尝试？");
+      if (!proceed) return;
     }
 
-    // 2. Fallback to Line Parsing (Legacy format)
-    const lines = importText.split('\n').filter(line => line.trim());
-    const parsed: Tool[] = [];
-    const seenInBatch = new Set<string>();
-    
-    // Helper to map category input
-    const parseCategory = (input: string): CategoryId => {
-       const s = input.toLowerCase().trim();
-       if (s.includes('chat') || s.includes('对话')) return 'chat';
-       if (s.includes('study') || s.includes('学习') || s.includes('教育')) return 'study';
-       if (s.includes('work') || s.includes('办公') || s.includes('code') || s.includes('编程') || s.includes('write') || s.includes('写作') || s.includes('search') || s.includes('搜索') || s.includes('translate') || s.includes('翻译')) return 'work';
-       if (s.includes('life') || s.includes('生活') || s.includes('daily')) return 'life';
-       if (s.includes('media') || s.includes('多媒体') || s.includes('image') || s.includes('绘图') || s.includes('video') || s.includes('视频') || s.includes('audio') || s.includes('音频')) return 'media';
-       if (s.includes('agent') || s.includes('智能体') || s.includes('bot')) return 'agent';
-       
-       return 'chat'; // Default fallback
-    };
-    
-    lines.forEach(line => {
-      const parts = line.split('|').map(p => p.trim());
-      if (parts.length >= 2) {
-        const name = parts[0];
-        const url = parts[1];
-        const description = parts[2] || '暂无描述';
-        
-        const normalized = normalizeUrl(url);
-        if (seenInBatch.has(normalized)) return;
-        seenInBatch.add(normalized);
+    if (!window.confirm(`🚀 确定要发布吗？\n\n即将把本地 ${tools.length} 条数据覆盖同步到云端。`)) return;
 
-        let categoryId: CategoryId = 'chat';
-        let tags: string[] = [];
+    setStatus('publishing');
+    setStatusMsg('正在连接云端数据库...');
 
-        // Parse format: Name | URL | Description | Category | Tags
-        if (parts.length >= 4) {
-             const potentialCat = parts[3];
-             // Heuristic: If part 3 matches category keywords and doesn't look like a tag list
-             const isTagList = potentialCat.includes(',') || potentialCat.includes('，');
-             const s = potentialCat.toLowerCase();
-             const knownKeywords = ['chat', '对话', 'study', '学习', 'work', '办公', 'life', '生活', 'media', '多媒体', 'agent', '智能体', 'image', 'video', 'code'];
-             const isCatKeyword = knownKeywords.some(k => s.includes(k));
-             
-             if (parts.length >= 5) {
-                 categoryId = parseCategory(parts[3]);
-                 tags = parts[4].split(/[,，、\s]+/).map(t => t.trim()).filter(t => t.length > 0);
-             } else if (isCatKeyword && !isTagList) {
-                 categoryId = parseCategory(parts[3]);
-             } else {
-                 tags = parts[3].split(/[,，、\s]+/).map(t => t.trim()).filter(t => t.length > 0);
-             }
-        }
+    try {
+      const supabase = createClient(dbConfig.url, keyToUse);
 
-        parsed.push({
-          id: `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: name,
-          url: url,
-          description: description,
-          categoryId: categoryId,
-          tags: tags,
-          isHot: false
-        });
-      }
-    });
-    setImportPreview(parsed);
+      // 1. Delete all existing (Full Sync Strategy)
+      setStatusMsg('正在清理旧数据...');
+      const { error: delError } = await supabase.from('tools').delete().neq('id', 'placeholder_safety_check');
+      if (delError) throw delError;
+
+      // 2. Insert new data
+      setStatusMsg(`正在上传 ${tools.length} 条新数据...`);
+      const { error: insError } = await supabase.from('tools').insert(tools);
+      if (insError) throw insError;
+
+      setStatus('success');
+      setStatusMsg('🎉 发布成功！全网数据已更新。');
+    } catch (e: any) {
+      console.error(e);
+      setStatus('error');
+      setStatusMsg(`发布失败: ${e.message || '请检查密钥权限'}`);
+    }
   };
 
-  const { uniqueImports, duplicateImports } = useMemo(() => {
-    if (importPreview.length === 0) return { uniqueImports: [], duplicateImports: [] };
-
-    const existingUrls = new Set(tools.map(t => normalizeUrl(t.url)));
-    const unique: Tool[] = [];
-    const dups: Tool[] = [];
-
-    importPreview.forEach(item => {
-      if (existingUrls.has(normalizeUrl(item.url))) {
-        dups.push(item);
-      } else {
-        unique.push(item);
-      }
-    });
-
-    return { uniqueImports: unique, duplicateImports: dups };
-  }, [importPreview, tools]);
-
-  const confirmImport = () => {
-    if (uniqueImports.length === 0) return;
-    setTools(prev => [...uniqueImports, ...prev]);
-    setImportText('');
-    setImportPreview([]);
-    const dupMsg = duplicateImports.length > 0 ? `\n(已自动忽略 ${duplicateImports.length} 个重复网址)` : '';
-    alert(`成功导入 ${uniqueImports.length} 个新网站！${dupMsg}`);
-    setActiveTab('tools');
-  };
-
-  const handleExport = () => {
-    const dataStr = JSON.stringify(tools, null, 2);
-    navigator.clipboard.writeText(dataStr).then(() => {
-        alert('✅ 数据代码已复制到剪贴板！\n\n请在其他设备（如手机）的后台打开此页面，粘贴到下方的输入框中即可同步。');
-    }).catch(() => {
-        alert('❌ 复制失败，请手动复制屏幕下方导出的内容。');
-    });
-  };
-
-  // --- Logic: Tag Management ---
-  const { activeTags, unusedTags } = useMemo(() => {
-    const stats: Record<string, number> = {};
-    globalTags.forEach(tag => stats[tag] = 0);
-    tools.forEach(tool => {
-      tool.tags?.forEach(tag => {
-        if (stats.hasOwnProperty(tag)) {
-           stats[tag] = (stats[tag] || 0) + 1;
-        } else {
-           stats[tag] = 1;
+  // Import Logic
+  const handleImport = () => {
+    try {
+      const lines = importText.trim().split('\n');
+      const newTools: Tool[] = [];
+      lines.forEach(line => {
+        // Format: Name | URL | Description | Category | Tags
+        const parts = line.split('|').map(s => s.trim());
+        if (parts.length >= 2) {
+          newTools.push({
+            id: `import-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            name: parts[0],
+            url: parts[1],
+            description: parts[2] || '暂无描述',
+            categoryId: (parts[3] as any) || 'chat',
+            tags: parts[4] ? parts[4].split(/[,，]/).map(t => t.trim()) : [],
+            isHot: false
+          });
         }
       });
-    });
-
-    const active: [string, number][] = [];
-    const unused: [string, number][] = [];
-
-    Object.entries(stats).forEach(([tag, count]) => {
-      if (count > 0) active.push([tag, count]);
-      else unused.push([tag, count]);
-    });
-
-    return {
-      activeTags: active.sort((a, b) => b[1] - a[1]),
-      unusedTags: unused.sort((a, b) => a[0].localeCompare(b[0]))
-    };
-  }, [tools, globalTags]);
-
-  const handleRenameTag = (oldTag: string) => {
-    if (!newTagName.trim() || newTagName === oldTag) {
-      setEditingTag(null);
-      return;
+      if (newTools.length > 0) {
+        setTools(prev => [...newTools, ...prev]);
+        setImportText('');
+        alert(`成功导入 ${newTools.length} 个网站！\n请记得点击【发布】同步到云端。`);
+        setActiveTab('publish');
+      } else {
+        alert("格式错误，请使用：名称 | 网址 | 描述");
+      }
+    } catch (e) {
+      alert("解析失败");
     }
-    setConfirmation({
-      isOpen: true,
-      title: '重命名标签',
-      message: `确定将所有 "${oldTag}" 标签重命名为 "${newTagName}" 吗？`,
-      isDangerous: false,
-      confirmText: '保存更改',
-      action: () => {
-        setGlobalTags(prev => prev.map(t => t === oldTag ? newTagName : t));
-        setTools(prev => prev.map(tool => {
-          if (tool.tags?.includes(oldTag)) {
-            return {
-              ...tool,
-              tags: tool.tags.map(t => t === oldTag ? newTagName : t)
-            };
-          }
-          return tool;
-        }));
-        setEditingTag(null);
-        setNewTagName('');
-        closeConfirmation();
-      }
-    });
   };
 
-  const handleDeleteTag = (e: React.MouseEvent, tagToDelete: string, isUnused: boolean) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const usedByCount = isUnused ? 0 : tools.filter(t => t.tags?.includes(tagToDelete)).length;
-    setConfirmation({
-      isOpen: true,
-      title: '彻底删除标签',
-      message: isUnused 
-        ? `标签 "${tagToDelete}" 当前未被使用。\n确定要将其从标签库中彻底移除吗？`
-        : `⚠️ 标签 "${tagToDelete}" 正在被 ${usedByCount} 个网站使用。\n删除后，它将从所有网站和标签库中消失。`,
-      isDangerous: true,
-      confirmText: '彻底删除',
-      action: () => {
-        setGlobalTags(prev => prev.filter(t => t !== tagToDelete));
-        if (!isUnused) {
-          setTools(prev => prev.map(tool => {
-              if (tool.tags && tool.tags.includes(tagToDelete)) {
-                  return {
-                      ...tool,
-                      tags: tool.tags.filter(t => t !== tagToDelete)
-                  };
-              }
-              return tool;
-          }));
-        }
-        closeConfirmation();
-      }
-    });
+  // Delete Tool
+  const handleDelete = (id: string) => {
+    if (window.confirm("确定删除此项吗？")) {
+      setTools(prev => prev.filter(t => t.id !== id));
+    }
   };
-
-  // --- Render Helpers ---
-  const renderTagCard = (tagName: string, count: number, isUnused: boolean) => (
-    <div key={tagName} className={`p-4 rounded-xl border shadow-sm hover:shadow-md transition-all group ${
-      isUnused ? 'bg-slate-50 border-slate-200 opacity-80' : 'bg-white border-slate-200'
-    }`}>
-      <div className="flex items-center justify-between mb-2">
-        <span className={`text-xs font-bold uppercase tracking-wider flex items-center gap-1 ${isUnused ? 'text-slate-400' : 'text-blue-500'}`}>
-           <TagIcon size={10} />
-           {isUnused ? 'Idle' : 'Active'}
-        </span>
-        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-          isUnused ? 'bg-slate-200 text-slate-500' : 'bg-blue-50 text-blue-600'
-        }`}>
-          {count} 引用
-        </span>
-      </div>
-      
-      {editingTag === tagName ? (
-        <div className="flex items-center gap-2 mt-2">
-          <input 
-            autoFocus
-            value={newTagName}
-            onChange={e => setNewTagName(e.target.value)}
-            className="flex-1 min-w-0 bg-white border border-blue-500 rounded px-2 py-1 text-sm focus:outline-none shadow-sm"
-          />
-          <button onClick={() => handleRenameTag(tagName)} className="text-green-600 p-1 hover:bg-green-50 rounded"><Save size={16} /></button>
-          <button onClick={() => setEditingTag(null)} className="text-slate-400 p-1 hover:bg-slate-50 rounded"><X size={16} /></button>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between">
-           <h3 
-            onClick={() => !isUnused && onSelectTag && onSelectTag(tagName)}
-            className={`font-bold text-lg flex items-center gap-1 transition-colors ${
-              isUnused 
-                ? 'text-slate-500 cursor-default' 
-                : 'text-slate-800 cursor-pointer hover:text-blue-600'
-            }`}
-           >
-             {tagName}
-             {!isUnused && <ExternalLink size={14} className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400" />}
-           </h3>
-          <div className="flex gap-1">
-            <button 
-              onClick={() => { setEditingTag(tagName); setNewTagName(tagName); }}
-              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-            >
-              <Edit2 size={16} />
-            </button>
-            <button 
-              type="button"
-              onClick={(e) => handleDeleteTag(e, tagName, isUnused)}
-              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 pb-20 relative">
-      {/* Header */}
-      <div className="bg-slate-900 text-white px-6 py-6 shadow-lg">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={onExit} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+    <div className="min-h-screen bg-slate-50 pb-20">
+      {/* Top Navigation */}
+      <div className="bg-slate-900 text-white sticky top-0 z-40 shadow-xl">
+        <div className="flex items-center justify-between px-4 py-4 max-w-5xl mx-auto">
+          <div className="flex items-center gap-3">
+            <button onClick={onExit} className="p-2 rounded-full hover:bg-white/10 transition-colors">
               <ArrowLeft size={20} />
             </button>
-            <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2">
-                <Database className="text-blue-400" /> 管理系统
-              </h1>
-              <p className="text-slate-400 text-xs mt-1 flex items-center gap-1">
-                 <span className={`inline-block w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-green-500 animate-pulse' : 'bg-slate-500'}`}></span>
-                 {dbStatus === 'connected' ? 'Cloud Sync Active' : 'Local Storage Mode'}
-              </p>
-            </div>
+            <h1 className="font-bold text-lg flex items-center gap-2">
+              <Settings size={18} className="text-blue-400" />
+              CMS 后台
+            </h1>
+          </div>
+          <div className="text-xs font-mono bg-white/10 px-2 py-1 rounded text-slate-300">
+            Local: {tools.length}
           </div>
         </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto flex overflow-x-auto no-scrollbar">
-          <button 
-            onClick={() => setActiveTab('tools')}
-            className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'tools' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            网站列表
-          </button>
-          <button 
-            onClick={() => setActiveTab('import')}
-            className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'import' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            导入/导出
-          </button>
-          <button 
-            onClick={() => setActiveTab('tags')}
-            className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'tags' ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            标签管理
-          </button>
-          <button 
-            onClick={() => setActiveTab('cloud')}
-            className={`px-6 py-4 text-sm font-bold border-b-2 transition-colors whitespace-nowrap flex items-center gap-2 ${activeTab === 'cloud' ? 'border-green-500 text-green-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
-          >
-            <Cloud size={16} /> 云数据库 <span className="bg-green-100 text-green-700 text-[10px] px-1 rounded">Beta</span>
-          </button>
+        
+        {/* Tabs */}
+        <div className="flex px-2 max-w-5xl mx-auto overflow-x-auto no-scrollbar">
+          {[
+            { id: 'publish', label: '发布中心', icon: Rocket },
+            { id: 'manage', label: '内容管理', icon: Database },
+            { id: 'import', label: '批量导入', icon: Upload },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as Tab)}
+              className={`flex-1 py-3 text-sm font-bold border-b-2 flex items-center justify-center gap-2 transition-all whitespace-nowrap px-4 ${
+                activeTab === tab.id 
+                  ? 'border-blue-500 text-white' 
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <tab.icon size={16} />
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Content Area */}
-      <div className="max-w-7xl mx-auto p-4 sm:p-6">
+      <div className="max-w-5xl mx-auto p-4 animate-fade-in-up">
         
-        {/* VIEW: TOOL LIST */}
-        {activeTab === 'tools' && (
-          <div className="animate-fade-in-up">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input 
-                  type="text" 
-                  placeholder="搜索名称、链接或标签..." 
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 bg-white shadow-sm"
-                />
+        {/* === TAB: PUBLISH === */}
+        {activeTab === 'publish' && (
+          <div className="space-y-6">
+            
+            {/* 1. Connection Card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                  <CloudLightning size={18} className="text-blue-600" />
+                  数据库连接
+                </h3>
+                <button 
+                  onClick={() => setShowKeys(!showKeys)}
+                  className="text-xs text-blue-600 font-bold hover:underline"
+                >
+                  {showKeys ? '隐藏密钥' : '显示密钥'}
+                </button>
               </div>
+              
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Project URL</label>
+                  <input 
+                    value={dbConfig.url}
+                    onChange={e => setDbConfig({...dbConfig, url: e.target.value})}
+                    placeholder="https://your-project.supabase.co"
+                    className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Anon Key (Public)</label>
+                  <div className="relative">
+                    <input 
+                      type={showKeys ? "text" : "password"}
+                      value={dbConfig.anonKey}
+                      onChange={e => setDbConfig({...dbConfig, anonKey: e.target.value})}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR..."
+                      className="w-full bg-slate-100 border-none rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none pr-10"
+                    />
+                  </div>
+                </div>
 
-              <button 
-                onClick={() => setFilterNoTags(!filterNoTags)}
-                className={`flex items-center gap-1.5 px-3 py-3 border rounded-xl transition-colors font-bold text-sm shadow-sm whitespace-nowrap ${
-                  filterNoTags 
-                    ? 'bg-blue-100 border-blue-200 text-blue-700' 
-                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                }`}
-                title="只显示无标签的网站"
-              >
-                {filterNoTags ? <Filter size={16} className="fill-current"/> : <TagIcon size={16} className="text-slate-400" />}
-                <span className="hidden sm:inline">无标签</span>
-              </button>
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-bold text-orange-500 uppercase mb-1">
+                    Service Role Key (Admin Write) <AlertCircle size={12} />
+                  </label>
+                  <input 
+                    type={showKeys ? "text" : "password"}
+                    value={dbConfig.serviceKey}
+                    onChange={e => setDbConfig({...dbConfig, serviceKey: e.target.value})}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR... (管理员专用)"
+                    className="w-full bg-orange-50 border border-orange-100 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-orange-500 outline-none placeholder-orange-200 text-orange-800"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                    * 仅用于发布数据，不会保存在代码中。为了让他人能看到您的网站，请确保部署后的网站 <code className="bg-slate-100 px-1 rounded">config.ts</code> 包含 URL 和 Anon Key。
+                  </p>
+                </div>
 
-              <button 
-                onClick={handleScanDuplicates}
-                className="flex items-center gap-1.5 px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 hover:text-blue-600 transition-colors font-bold text-sm shadow-sm whitespace-nowrap"
-                title="检查标题重复的网站"
-              >
-                <Layers size={16} />
-                <span className="hidden sm:inline">检查</span>重复
-              </button>
+                <div className="flex gap-3 pt-2">
+                   <button 
+                     onClick={handleSaveConfig}
+                     className="flex-1 bg-slate-800 text-white py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-900 transition-colors"
+                   >
+                     {configSaved ? <CheckCircle size={16} /> : <Save size={16} />}
+                     {configSaved ? '已保存' : '保存配置'}
+                   </button>
+                   <button 
+                     onClick={testConnection}
+                     className="flex-1 bg-white border border-slate-200 text-slate-600 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors"
+                   >
+                     <RefreshCw size={16} className={status === 'testing' ? 'animate-spin' : ''} />
+                     测试连接
+                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Action Area */}
+            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl shadow-lg p-6 text-white text-center">
+              <h2 className="text-2xl font-bold mb-2">一键全网发布</h2>
+              <p className="text-blue-100 text-sm mb-6 opacity-90">
+                将本地的 <span className="font-bold text-white bg-white/20 px-1.5 rounded">{tools.length}</span> 个网站同步到云端数据库
+              </p>
+              
+              {status === 'publishing' ? (
+                 <div className="bg-white/10 rounded-xl p-4 flex flex-col items-center justify-center animate-pulse">
+                    <RefreshCw size={32} className="animate-spin mb-2" />
+                    <span className="font-bold">{statusMsg}</span>
+                 </div>
+              ) : status === 'success' ? (
+                 <div className="bg-green-500/20 border border-green-400/50 rounded-xl p-4 flex flex-col items-center justify-center">
+                    <CheckCircle size={32} className="mb-2 text-green-300" />
+                    <span className="font-bold">{statusMsg}</span>
+                    <button onClick={() => setStatus('idle')} className="mt-4 text-xs underline opacity-80">重置状态</button>
+                 </div>
+              ) : status === 'error' ? (
+                 <div className="bg-red-500/20 border border-red-400/50 rounded-xl p-4">
+                    <div className="flex items-center justify-center gap-2 mb-1 text-red-200">
+                       <AlertCircle size={20} /> 发布失败
+                    </div>
+                    <p className="text-sm opacity-90">{statusMsg}</p>
+                    <button onClick={() => setStatus('idle')} className="mt-3 bg-white/20 px-4 py-1.5 rounded-lg text-xs font-bold">重试</button>
+                 </div>
+              ) : (
+                <button
+                  onClick={handlePublish}
+                  className="w-full bg-white text-blue-600 py-4 rounded-xl font-black text-lg shadow-lg hover:bg-blue-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Rocket size={24} className="animate-bounce" />
+                  立即发布
+                </button>
+              )}
             </div>
             
-            {filterNoTags && (
-               <div className="mb-4 text-sm text-blue-600 font-medium bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 flex items-center gap-2">
-                  <AlertCircle size={16} />
-                  正在显示未分配标签的网站 ({filteredTools.length})
-                  <button onClick={() => setFilterNoTags(false)} className="ml-auto text-blue-800 underline">清除筛选</button>
-               </div>
-            )}
+            {/* Instructions */}
+            <div className="bg-slate-100 rounded-xl p-4 text-xs text-slate-500 leading-relaxed">
+              <p className="font-bold mb-1">💡 如何让其他人看到？</p>
+              <p>您在这里发布成功后，其他人打开网站需要能读取数据库。请确保您已将 Project URL 和 Anon Key 填入 <code className="text-slate-700 font-mono">config.ts</code> 文件并重新部署网站。</p>
+            </div>
+          </div>
+        )}
 
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              {filteredTools.map((tool) => (
-                <div key={tool.id} className="flex items-center justify-between p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors relative group">
-                  <div className="flex-1 min-w-0 mr-4">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <h3 className="font-bold text-slate-800 truncate">{tool.name}</h3>
-                      {tool.isHot && <Sparkles size={12} className="text-red-500 fill-current" />}
+        {/* === TAB: MANAGE === */}
+        {activeTab === 'manage' && (
+          <div className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-3.5 text-slate-400" size={18} />
+              <input 
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                placeholder="搜索本地网站..."
+                className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="grid gap-3">
+              {tools.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase())).map(tool => (
+                <div key={tool.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between group">
+                  <div className="flex items-center gap-3 overflow-hidden">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center bg-slate-100 text-slate-500 text-xs font-bold shrink-0`}>
+                       {tool.name.slice(0,1)}
                     </div>
-                    <p className="text-xs text-slate-400 truncate font-mono">{tool.url}</p>
-                    <div className="flex gap-1 mt-1.5 flex-wrap">
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded border ${
-                        tool.categoryId === 'chat' ? 'bg-blue-50 text-blue-500 border-blue-100' :
-                        tool.categoryId === 'media' ? 'bg-purple-50 text-purple-500 border-purple-100' :
-                        tool.categoryId === 'work' ? 'bg-sky-50 text-sky-500 border-sky-100' :
-                        'bg-slate-50 text-slate-500 border-slate-200'
-                      }`}>
-                        {tool.categoryId.toUpperCase()}
-                      </span>
-                      {tool.tags?.map(t => (
-                        <span key={t} className="text-[9px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">{t}</span>
-                      ))}
-                      {(!tool.tags || tool.tags.length === 0) && (
-                         <span className="text-[9px] bg-red-50 px-1.5 py-0.5 rounded text-red-400 border border-red-100 italic">No Tags</span>
-                      )}
+                    <div className="min-w-0">
+                      <h3 className="font-bold text-slate-800 truncate">{tool.name}</h3>
+                      <p className="text-xs text-slate-400 truncate">{tool.url}</p>
                     </div>
                   </div>
-                  
-                  <div className="flex items-center gap-2 z-20">
+                  <div className="flex gap-2 shrink-0">
                     <button 
-                      type="button"
-                      onClick={(e) => handleEditClick(e, tool)}
-                      className="px-3 py-2 text-sm bg-slate-50 text-slate-600 border border-slate-200 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors font-bold flex items-center gap-1"
+                      onClick={() => window.open(tool.url, '_blank')}
+                      className="p-2 text-slate-300 hover:text-blue-500 transition-colors"
                     >
-                      <Edit2 size={16} /> 编辑
+                      <Globe size={18} />
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(tool.id)}
+                      className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 size={18} />
                     </button>
                   </div>
                 </div>
               ))}
-              {filteredTools.length === 0 && (
-                <div className="p-8 text-center text-slate-400">没有找到相关网站</div>
-              )}
             </div>
           </div>
         )}
 
-        {/* VIEW: CLOUD DB */}
-        {activeTab === 'cloud' && (
-          <div className="animate-fade-in-up max-w-3xl mx-auto space-y-8">
-            <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-6 text-white shadow-xl">
-               <div className="flex items-start justify-between">
-                 <div>
-                   <h2 className="text-2xl font-bold flex items-center gap-2 mb-2">
-                     <Database className="text-green-400" /> Supabase 云数据库
-                   </h2>
-                   <p className="text-slate-300 text-sm max-w-lg">
-                     连接到您自己的 Supabase 数据库，实现多端数据实时同步。数据将存储在您的私有云端，不再局限于浏览器缓存。
-                   </p>
-                 </div>
-                 <div className={`px-3 py-1 rounded-full text-xs font-bold border ${dbStatus === 'connected' ? 'bg-green-500/20 border-green-500/50 text-green-300' : 'bg-red-500/20 border-red-500/50 text-red-300'}`}>
-                    {dbStatus === 'connected' ? '已连接' : '未连接'}
-                 </div>
-               </div>
-            </div>
-
-            {dbStatus === 'connected' ? (
-              <div className="grid md:grid-cols-2 gap-6">
-                 {/* Push Card */}
-                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 mb-4">
-                       <Upload size={24} />
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-800 mb-2">上传本地数据</h3>
-                    <p className="text-sm text-slate-500 mb-6 min-h-[40px]">
-                       将当前浏览器的 {tools.length} 条数据推送到云端。⚠️ 警告：这将覆盖云端现有数据。
-                    </p>
-                    <button 
-                      onClick={handleCloudPush}
-                      disabled={syncLoading}
-                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
-                    >
-                      {syncLoading ? <RefreshCw className="animate-spin" /> : <Upload size={18} />}
-                      推送到云端
-                    </button>
-                 </div>
-
-                 {/* Pull Card */}
-                 <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-green-600 mb-4">
-                       <Download size={24} />
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-800 mb-2">下载云端数据</h3>
-                    <p className="text-sm text-slate-500 mb-6 min-h-[40px]">
-                       从云端拉取最新数据并覆盖本地。请确保云端数据是最新的。
-                    </p>
-                    <button 
-                      onClick={handleCloudPull}
-                      disabled={syncLoading}
-                      className="w-full py-3 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
-                    >
-                      {syncLoading ? <RefreshCw className="animate-spin" /> : <Download size={18} />}
-                      从云端拉取
-                    </button>
-                 </div>
-
-                 <div className="md:col-span-2 text-center">
-                    <button onClick={clearDbConfig} className="text-red-400 hover:text-red-500 text-sm font-medium flex items-center gap-1 mx-auto hover:underline">
-                       <LogOut size={14} /> 断开连接 / 清除配置
-                    </button>
-                 </div>
-              </div>
-            ) : (
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                 <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                   <Link2 size={20} className="text-blue-500" /> 连接配置
-                 </h3>
-                 <div className="space-y-4 max-w-xl mx-auto">
-                    <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Project URL</label>
-                       <input 
-                         value={dbConfig.url}
-                         onChange={e => setDbConfig({...dbConfig, url: e.target.value})}
-                         className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono text-sm"
-                         placeholder="https://xyz.supabase.co"
-                       />
-                    </div>
-                    <div>
-                       <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Anon Key (Public)</label>
-                       <input 
-                         type="password"
-                         value={dbConfig.key}
-                         onChange={e => setDbConfig({...dbConfig, key: e.target.value})}
-                         className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono text-sm"
-                         placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                       />
-                    </div>
-                    <button 
-                      onClick={saveDbConfig}
-                      className="w-full py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors"
-                    >
-                      保存并连接
-                    </button>
-                 </div>
-
-                 <div className="mt-8 pt-8 border-t border-slate-100">
-                    <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                       <HelpCircle size={16} /> 如何开始？
-                    </h4>
-                    <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-500">
-                       <li>前往 <a href="https://supabase.com" target="_blank" className="text-blue-500 underline">Supabase.com</a> 注册并创建一个新项目。</li>
-                       <li>在项目设置中找到 <strong>API Settings</strong>，复制 <code>Project URL</code> 和 <code>anon public key</code>。</li>
-                       <li>在 Supabase 的 <strong>SQL Editor</strong> 中运行以下代码来创建数据表：</li>
-                    </ol>
-                    <div className="mt-3 bg-slate-900 rounded-xl p-4 relative group">
-                       <pre className="text-xs text-green-400 font-mono overflow-x-auto no-scrollbar">
-{`create table tools (
-  id text primary key,
-  name text,
-  description text,
-  url text,
-  "iconUrl" text,
-  "categoryId" text,
-  "isHot" boolean,
-  tags text[]
-);`}
-                       </pre>
-                       <button 
-                         onClick={() => navigator.clipboard.writeText(`create table tools (\n  id text primary key,\n  name text,\n  description text,\n  url text,\n  "iconUrl" text,\n  "categoryId" text,\n  "isHot" boolean,\n  tags text[]\n);`)}
-                         className="absolute top-2 right-2 p-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"
-                         title="复制 SQL"
-                       >
-                          <Copy size={14} />
-                       </button>
-                    </div>
-                 </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* VIEW: BATCH IMPORT / BACKUP */}
+        {/* === TAB: IMPORT === */}
         {activeTab === 'import' && (
-          <div className="animate-fade-in-up max-w-3xl mx-auto">
+          <div className="space-y-4">
+            <div className="bg-blue-50 text-blue-800 p-4 rounded-xl text-sm leading-relaxed">
+              <p className="font-bold mb-1">批量导入格式：</p>
+              <p className="font-mono text-xs opacity-80">名称 | 网址 | 描述 | 分类 | 标签1,标签2</p>
+              <p className="mt-2 text-xs">例如：<br/>ChatGPT | https://openai.com | AI对话 | chat | AI,助手</p>
+            </div>
             
-            {/* Export Section */}
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white mb-8 shadow-lg shadow-indigo-500/20">
-                <div className="flex items-start justify-between mb-4">
-                   <div>
-                       <h2 className="text-xl font-bold flex items-center gap-2">
-                           <Smartphone size={24} /> 多端同步 / 数据备份
-                       </h2>
-                       <p className="text-indigo-100 text-sm mt-1 opacity-90 max-w-md">
-                           由于是纯静态网站，数据仅保存在当前浏览器中。若需同步到手机或其他设备，请先在此处点击“导出”，然后在另一台设备的此页面“导入”。
-                       </p>
-                   </div>
-                   <div className="bg-white/20 p-2 rounded-lg">
-                       <FileJson size={24} />
-                   </div>
-                </div>
-                <button 
-                   onClick={handleExport}
-                   className="w-full bg-white text-indigo-600 font-bold py-3 rounded-xl hover:bg-indigo-50 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-sm"
-                >
-                   <Copy size={18} /> 复制当前数据代码 (导出)
-                </button>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
-                    <Upload size={20} className="text-blue-500" />
-                    <h3>导入数据 / 批量添加</h3>
-                </div>
-                
-                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 mb-4 text-xs text-slate-500">
-                    <p className="font-bold mb-1 text-slate-700">支持两种格式：</p>
-                    <ul className="list-disc pl-4 space-y-1">
-                        <li><span className="text-blue-600 font-medium">JSON 格式</span>：直接粘贴上方导出的数据代码，用于恢复备份或同步。</li>
-                        <li><span className="text-green-600 font-medium">文本格式</span>：一行一个，格式为 <code className="bg-white px-1 border rounded">名称 | 链接 | 描述 | 分类 | 标签</code></li>
-                    </ul>
-                </div>
-
-                <textarea
-                  value={importText}
-                  onChange={e => setImportText(e.target.value)}
-                  className="w-full h-48 p-4 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-xs sm:text-sm shadow-inner bg-slate-50 focus:bg-white transition-colors"
-                  placeholder={`粘贴导出的 JSON 代码，或者输入新网站：\n\nChatGPT | https://chat.openai.com | 全球最强综合 AI | 对话 | 外网,智能\nMidjourney | https://www.midjourney.com | 顶级绘图工具 | 绘图 | 付费`}
-                />
-
-                <div className="flex gap-4 mt-4">
-                  <button 
-                    onClick={parseImportText}
-                    className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Search size={18} /> 解析预览
-                  </button>
-                  <button 
-                    disabled={uniqueImports.length === 0}
-                    onClick={confirmImport}
-                    className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
-                  >
-                    <Download size={18} /> 确认导入 ({uniqueImports.length})
-                  </button>
-                </div>
-            </div>
-
-            {duplicateImports.length > 0 && (
-              <div className="mt-6 p-4 rounded-xl bg-red-50 border border-red-100 animate-fade-in">
-                <div className="flex items-center gap-2 text-red-600 font-bold mb-2">
-                  <Ban size={18} />
-                  <span>发现 {duplicateImports.length} 个已存在的重复网站</span>
-                </div>
-                <p className="text-xs text-red-400 mb-3">系统已自动将它们标记为灰色，导入时会自动跳过，无需手动删除。</p>
-                <div className="bg-white/50 rounded-lg border border-red-100 overflow-hidden divide-y divide-red-50 max-h-40 overflow-y-auto no-scrollbar">
-                  {duplicateImports.map((item, idx) => (
-                    <div key={idx} className="p-2.5 text-sm flex gap-3 opacity-60">
-                      <span className="font-bold text-slate-600 w-1/4 truncate line-through decoration-red-400">{item.name}</span>
-                      <span className="text-slate-400 w-1/4 truncate line-through">{item.url}</span>
-                      <span className="text-red-400 text-xs italic flex-1 text-right">已存在</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {uniqueImports.length > 0 && (
-              <div className="mt-6">
-                <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2">
-                  <CheckCircle size={18} className="text-green-500" /> 准备导入的新网站 ({uniqueImports.length})
-                </h3>
-                <div className="bg-white rounded-xl border border-green-200 overflow-hidden divide-y divide-slate-100 shadow-sm ring-1 ring-green-100">
-                  {uniqueImports.map((item, idx) => (
-                    <div key={idx} className="p-3 text-sm flex gap-4 bg-green-50/10 items-center">
-                      <span className="font-bold text-slate-800 w-1/5 truncate">{item.name}</span>
-                      <span className="text-blue-500 w-1/5 truncate">{item.url}</span>
-                      
-                      {/* Category Badge */}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 bg-white text-slate-500 whitespace-nowrap hidden sm:inline-block">
-                        {item.categoryId === 'chat' ? '对话' :
-                         item.categoryId === 'media' ? '多媒体' :
-                         item.categoryId === 'study' ? '学习' :
-                         item.categoryId === 'work' ? '办公' :
-                         item.categoryId === 'life' ? '生活' :
-                         item.categoryId === 'agent' ? '智能体' : '其他'}
-                      </span>
-
-                      <span className="text-slate-500 w-1/5 truncate">{item.description}</span>
-                       <div className="flex-1 flex flex-wrap gap-1 justify-end">
-                         {item.tags?.map(t => (
-                           <span key={t} className="text-[10px] bg-slate-100 px-1 rounded text-slate-500 whitespace-nowrap">{t}</span>
-                         ))}
-                       </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <textarea 
+              value={importText}
+              onChange={e => setImportText(e.target.value)}
+              className="w-full h-64 bg-white border border-slate-200 rounded-xl p-4 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              placeholder="在此粘贴您的网站列表..."
+            />
+            
+            <button 
+              onClick={handleImport}
+              className="w-full bg-slate-800 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+            >
+              <Upload size={18} />
+              解析并导入
+            </button>
           </div>
         )}
 
-        {/* VIEW: TAG MANAGER */}
-        {activeTab === 'tags' && (
-          <div className="animate-fade-in-up space-y-8">
-            <div>
-              <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                使用中 ({activeTags.length})
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {activeTags.map(([tagName, count]) => renderTagCard(tagName, count, false))}
-                {activeTags.length === 0 && (
-                  <div className="col-span-full py-8 text-center text-slate-400 border border-dashed border-slate-300 rounded-xl">
-                    暂无活跃标签
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Archive size={16} />
-                闲置中 / 零引用 ({unusedTags.length})
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {unusedTags.map(([tagName, count]) => renderTagCard(tagName, count, true))}
-                {unusedTags.length === 0 && (
-                   <div className="col-span-full py-6 text-center text-slate-300 text-sm">
-                     没有闲置标签
-                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* --- DUPLICATE RESOLUTION MODAL --- */}
-      {showDedupModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-           <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden animate-scale-in">
-             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-yellow-50/50">
-               <div className="flex items-center gap-3">
-                 <div className="w-10 h-10 rounded-full bg-yellow-100 text-yellow-600 flex items-center justify-center">
-                   <Layers size={20} />
-                 </div>
-                 <div>
-                   <h3 className="text-lg font-bold text-slate-800">重复网站检测</h3>
-                   <p className="text-xs text-slate-500">检测到 {duplicateGroups.length} 组标题相似的条目，请手动清理</p>
-                 </div>
-               </div>
-               <button onClick={() => setShowDedupModal(false)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full">
-                 <X size={24} />
-               </button>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50">
-                {duplicateGroups.length === 0 && (
-                  <div className="text-center py-10">
-                    <CheckCircle size={48} className="mx-auto text-green-500 mb-4" />
-                    <p className="text-slate-600 font-bold">所有重复项已处理完毕！</p>
-                    <button onClick={() => setShowDedupModal(false)} className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg">关闭</button>
-                  </div>
-                )}
-
-                {duplicateGroups.map((group, idx) => (
-                  <div key={idx} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-500 flex items-center justify-between">
-                      <span>检测关键字: "{group.items[0].name}"</span>
-                      <span className="bg-slate-200 px-2 py-0.5 rounded text-[10px]">{group.items.length} 个重复</span>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                      {group.items.map(tool => (
-                        <div key={tool.id} className="p-4 flex items-center justify-between gap-4 group hover:bg-slate-50">
-                           <div className="flex-1 min-w-0">
-                             <div className="flex items-center gap-2 mb-1">
-                               <h4 className="font-bold text-slate-800 truncate">{tool.name}</h4>
-                               {tool.isHot && <span className="text-[10px] bg-red-100 text-red-600 px-1 rounded">HOT</span>}
-                             </div>
-                             <a href={tool.url} target="_blank" className="text-xs text-blue-500 truncate block hover:underline flex items-center gap-1">
-                               {tool.url} <ExternalLink size={10} />
-                             </a>
-                             <p className="text-xs text-slate-400 truncate mt-1">{tool.description}</p>
-                           </div>
-                           <button 
-                             onClick={() => handleDeleteDuplicateItem(tool.id, group.key)}
-                             className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100"
-                             title="删除此条目"
-                           >
-                             <Trash2 size={18} />
-                           </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-             </div>
-           </div>
-        </div>
-      )}
-
-      {/* --- CUSTOM CONFIRMATION MODAL --- */}
-      {confirmation.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/50 backdrop-blur-sm animate-fade-in">
-           <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-sm overflow-hidden animate-scale-in ring-1 ring-white/50">
-             <div className="p-6 text-center">
-               <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${confirmation.isDangerous ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
-                 <AlertTriangle size={28} />
-               </div>
-               <h3 className="text-lg font-bold text-slate-800 mb-2">{confirmation.title}</h3>
-               <p className="text-sm text-slate-500 mb-6 leading-relaxed whitespace-pre-wrap">{confirmation.message}</p>
-               
-               <div className="flex gap-3">
-                 <button 
-                   onClick={closeConfirmation}
-                   className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-colors"
-                 >
-                   取消
-                 </button>
-                 <button 
-                   onClick={confirmation.action}
-                   className={`flex-1 py-3 rounded-xl text-white font-bold transition-all shadow-lg active:scale-95 ${
-                     confirmation.isDangerous 
-                       ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20' 
-                       : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
-                   }`}
-                 >
-                   {confirmation.confirmText || '确定'}
-                 </button>
-               </div>
-             </div>
-           </div>
-        </div>
-      )}
-
-      {/* --- EDIT MODAL OVERLAY --- */}
-      {editingTool && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setEditingTool(null)}>
-          <div 
-            className="bg-white rounded-[24px] shadow-2xl w-full max-w-md overflow-hidden animate-scale-in"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Edit2 size={18} className="text-blue-500" /> 编辑网站
-              </h3>
-              <button onClick={() => setEditingTool(null)} className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/50">
-                <X size={20} />
-              </button>
-            </div>
-            
-            <form onSubmit={saveEditedTool} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">名称</label>
-                <input 
-                  required
-                  value={editingTool.name}
-                  onChange={e => setEditingTool({...editingTool, name: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-medium"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">链接</label>
-                <input 
-                  required
-                  value={editingTool.url}
-                  onChange={e => setEditingTool({...editingTool, url: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-mono text-slate-600"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">分类</label>
-                  <select 
-                    value={editingTool.categoryId}
-                    onChange={e => setEditingTool({...editingTool, categoryId: e.target.value as CategoryId})}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
-                  >
-                    <option value="chat">对话</option>
-                    <option value="study">学习</option>
-                    <option value="work">办公</option>
-                    <option value="life">生活</option>
-                    <option value="media">多媒体</option>
-                    <option value="agent">智能体</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">热门推荐</label>
-                  <label className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer">
-                    <input 
-                      type="checkbox"
-                      checked={editingTool.isHot || false}
-                      onChange={e => setEditingTool({...editingTool, isHot: e.target.checked})}
-                      className="w-4 h-4 rounded text-blue-600 focus:ring-0"
-                    />
-                    <span className="text-sm font-medium text-slate-700">设为 HOT</span>
-                  </label>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">描述</label>
-                <textarea 
-                  rows={2}
-                  value={editingTool.description}
-                  onChange={e => setEditingTool({...editingTool, description: e.target.value})}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">标签 (逗号分隔)</label>
-                <input 
-                  value={editingTool.tags ? (typeof editingTool.tags === 'string' ? editingTool.tags : editingTool.tags.join(', ')) : ''}
-                  onChange={e => setEditingTool({
-                    ...editingTool, 
-                    tags: e.target.value.split(/[,，\s]+/).filter(t => t.trim().length > 0)
-                  })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
-                  placeholder="例如: 免费, 开源"
-                />
-              </div>
-
-              <div className="pt-2 flex items-center gap-3">
-                <button 
-                  type="button" 
-                  onClick={handleDeleteFromModal}
-                  className="p-3 rounded-xl bg-red-50 text-red-500 font-bold border border-red-100 hover:bg-red-100 hover:text-red-600 transition-colors"
-                  title="删除此网站"
-                >
-                  <Trash2 size={20} />
-                </button>
-                <div className="flex-1 flex gap-3">
-                    <button 
-                      type="button" 
-                      onClick={() => setEditingTool(null)}
-                      className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold hover:bg-slate-50 transition-colors"
-                    >
-                      取消
-                    </button>
-                    <button 
-                      type="submit" 
-                      className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-colors"
-                    >
-                      保存修改
-                    </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
+
+// Simple Icon component for the search bar inside manage tab
+const Search = ({ className, size }: { className?: string, size?: number }) => (
+  <svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <circle cx="11" cy="11" r="8"></circle>
+    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+  </svg>
+);
